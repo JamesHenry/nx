@@ -73,8 +73,8 @@ const TaskRow = ({
         ) : undefined}
       </Box>
       {output ? (
-        <Box marginLeft={2}>
-          <Text color="gray">{`${figures.arrowRight} ${output}`}</Text>
+        <Box marginLeft={4} marginRight={2}>
+          <Text color="gray">{output}</Text>
         </Box>
       ) : undefined}
       {isExpanded && listChildren.length > 0 && (

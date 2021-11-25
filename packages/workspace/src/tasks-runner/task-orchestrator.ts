@@ -314,6 +314,8 @@ export class TaskOrchestrator {
           task: result.task,
           status: result.status,
           code,
+          terminalOutput:
+            result.status === 'failure' ? result.terminalOutput : undefined,
         };
       })
     );

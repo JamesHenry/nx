@@ -168,8 +168,9 @@ export function RunMany({ tasksState }) {
           case 'failure':
             return {
               ...task,
-              state: 'failed',
+              state: 'error',
               status: '',
+              output: taskResult.terminalOutput,
             };
           default:
             return task;
@@ -185,10 +186,7 @@ export function RunMany({ tasksState }) {
     },
   ];
 
-  const isEveryTaskSuccessfullyComplete = taskList.every(
-    (task) => task.state === 'success'
-  );
-  const shouldStopTimer = isEveryTaskSuccessfullyComplete;
+  // const shouldStopTimer = isEveryTaskSuccessfullyComplete;
 
   // if (!tasksState || !tasksState.tasks) {
   //     return null;
@@ -212,35 +210,10 @@ export function RunMany({ tasksState }) {
         )}
       </Static> */}
       <Box marginTop={1} marginX={2}>
-        <NxOutputRowTitle success={isEveryTaskSuccessfullyComplete}>
-          <Text
-            dimColor
-            color={isEveryTaskSuccessfullyComplete ? 'green' : 'white'}
-          >
-            {isEveryTaskSuccessfullyComplete
-              ? 'Successfully ran'
-              : 'Running target'}{' '}
-          </Text>
-          <Text
-            bold
-            color={isEveryTaskSuccessfullyComplete ? 'green' : 'white'}
-          >
-            {tasksState.target}
-          </Text>
-          <Text
-            dimColor
-            color={isEveryTaskSuccessfullyComplete ? 'green' : 'white'}
-          >
-            {' '}
-            for{' '}
-          </Text>
-          <Text
-            bold
-            color={isEveryTaskSuccessfullyComplete ? 'green' : 'white'}
-          >
-            {tasksState.projectNames.length} project(s):
-          </Text>
-        </NxOutputRowTitle>
+        <RunManyTitle
+          tasksState={tasksState}
+          taskList={taskList}
+        ></RunManyTitle>
       </Box>
 
       {/* <Box marginTop={1} paddingLeft={3} paddingRight={3}>
@@ -287,5 +260,84 @@ export function RunMany({ tasksState }) {
         ))}
       </Box>
     </>
+  );
+}
+
+function RunManyTitle({ tasksState, taskList }) {
+  const isEveryTaskComplete = taskList.every(
+    (task) => task.state === 'success' || task.state === 'error'
+  );
+
+  if (!isEveryTaskComplete) {
+    return (
+      <NxOutputRowTitle>
+        <Text dimColor color="white">
+          Running target{' '}
+        </Text>
+        <Text bold color="white">
+          {tasksState.target}
+        </Text>
+        <Text dimColor color="white">
+          {' '}
+          for{' '}
+        </Text>
+        <Text bold color="white">
+          {tasksState.projectNames.length} project(s):
+        </Text>
+      </NxOutputRowTitle>
+    );
+  }
+
+  const isEveryTaskSuccessfullyComplete = taskList.every(
+    (task) => task.state === 'success'
+  );
+
+  if (isEveryTaskSuccessfullyComplete) {
+    return (
+      <NxOutputRowTitle success={true}>
+        <Text dimColor color="green">
+          Successfully ran{' '}
+        </Text>
+        <Text bold color="green">
+          {tasksState.target}
+        </Text>
+        <Text dimColor color="green">
+          {' '}
+          for{' '}
+        </Text>
+        <Text bold color="green">
+          {tasksState.projectNames.length} project(s):
+        </Text>
+      </NxOutputRowTitle>
+    );
+  }
+
+  const numSuccessullyComplete = taskList.filter(
+    (task) => task.state === 'success'
+  ).length;
+  const numFailures = taskList.filter((task) => task.state === 'error').length;
+
+  return (
+    <NxOutputRowTitle>
+      <Text dimColor color="white">
+        Across{' '}
+      </Text>
+      <Text bold color="white">
+        Across {tasksState.projectNames.length} project(s)
+      </Text>
+      <Text dimColor color="white">
+        {' '}
+        for target{' '}
+      </Text>
+      <Text bold color="white">
+        {tasksState.target}
+      </Text>
+      <Text bold color="green">
+        {numSuccessullyComplete} succeeded{' '}
+      </Text>
+      <Text bold color="red">
+        {numFailures} failed
+      </Text>
+    </NxOutputRowTitle>
   );
 }
