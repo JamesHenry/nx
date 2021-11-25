@@ -6,6 +6,7 @@ import { Timer } from './timer';
 import { TaskRow } from './task-row';
 import { ProgressBar } from './progress-bar';
 import { NxOutputRowTitle } from './nx-output-row-title';
+import { TaskList } from './task-list';
 
 export function RunMany({ tasksState }) {
   const progressBoxRef = useRef();
@@ -13,7 +14,7 @@ export function RunMany({ tasksState }) {
   const [taskList, setTaskList] = useState(
     tasksState.projectNames.map((projectName) => ({
       projectName,
-      state: 'loading',
+      state: 'pending',
       status: '',
       output: '',
     }))
@@ -179,6 +180,26 @@ export function RunMany({ tasksState }) {
     });
   }, [tasksState.taskResults]);
 
+  useEffect(() => {
+    if (!tasksState.tasks) {
+      return;
+    }
+    setTaskList((state) => {
+      return state.map((task) => {
+        const matchedRunningTask = tasksState.tasks.find(
+          (t) => t.target.project === task.projectName
+        );
+        if (!matchedRunningTask || task.state !== 'pending') {
+          return task;
+        }
+        return {
+          ...task,
+          state: 'loading',
+        };
+      });
+    });
+  }, [tasksState.tasks]);
+
   const items = [
     {
       id: '1',
@@ -248,16 +269,8 @@ export function RunMany({ tasksState }) {
             </Box>
           </Box> */}
 
-      <Box marginY={1} paddingLeft={5} flexDirection="column">
-        {taskList.map((task) => (
-          <TaskRow
-            key={task.projectName}
-            label={task.projectName}
-            state={task.state}
-            status={task.status}
-            output={task.output}
-          />
-        ))}
+      <Box>
+        <TaskList tasksState={tasksState} taskList={taskList}></TaskList>
       </Box>
     </>
   );
@@ -306,37 +319,26 @@ function RunManyTitle({ tasksState, taskList }) {
           for{' '}
         </Text>
         <Text bold color="green">
-          {tasksState.projectNames.length} project(s):
+          {tasksState.projectNames.length} project(s)
         </Text>
       </NxOutputRowTitle>
     );
   }
 
-  const numSuccessullyComplete = taskList.filter(
-    (task) => task.state === 'success'
-  ).length;
-  const numFailures = taskList.filter((task) => task.state === 'error').length;
-
   return (
     <NxOutputRowTitle>
       <Text dimColor color="white">
-        Across{' '}
-      </Text>
-      <Text bold color="white">
-        Across {tasksState.projectNames.length} project(s)
-      </Text>
-      <Text dimColor color="white">
-        {' '}
-        for target{' '}
+        Ran target{' '}
       </Text>
       <Text bold color="white">
         {tasksState.target}
       </Text>
-      <Text bold color="green">
-        {numSuccessullyComplete} succeeded{' '}
+      <Text dimColor color="white">
+        {' '}
+        for{' '}
       </Text>
-      <Text bold color="red">
-        {numFailures} failed
+      <Text bold color="white">
+        {tasksState.projectNames.length} project(s)
       </Text>
     </NxOutputRowTitle>
   );

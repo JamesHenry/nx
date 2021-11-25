@@ -3,7 +3,7 @@ import * as React from 'react';
 
 interface NxOutputRowTitleProps {
   success?: boolean;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }
 
 export function NxOutputRowTitle({ children, success }: NxOutputRowTitleProps) {
@@ -15,7 +15,7 @@ export function NxOutputRowTitle({ children, success }: NxOutputRowTitleProps) {
         NX{' '}
       </Text>
       <Text> </Text>
-      {children}
+      {children || null}
     </>
   );
 }

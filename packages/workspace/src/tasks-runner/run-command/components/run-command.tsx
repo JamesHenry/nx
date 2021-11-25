@@ -47,13 +47,11 @@ export function RunCommandComponent({ lifeCycle, ...otherProps }) {
   };
 
   switch (runCommandState) {
-    case 'INIT':
-      return <NxOutputRowTitle>{''}</NxOutputRowTitle>;
     case 'NO_TARGETS_RUN':
       return <NoTargetsRun onStartCommandParams={onStartCommandParamsState} />;
     case 'RUN_MANY':
       return <RunMany tasksState={tasksState} />;
     default:
-      return <Text>{runCommandState}</Text>;
+      return <Text>{''}</Text>;
   }
 }

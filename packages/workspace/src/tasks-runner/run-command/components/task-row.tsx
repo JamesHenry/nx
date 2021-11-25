@@ -23,65 +23,61 @@ const getSymbol = (state) => {
   }
 
   if (state === 'pending') {
-    return <Text color="gray">{figures.squareSmallFilled}</Text>;
+    return <Text color="gray">{figures.info}</Text>;
+  }
+
+  if (state === 'local-cache') {
+    return <Text color="gray">📂</Text>;
+  }
+
+  if (state === 'remote-cache') {
+    return <Text color="gray">☁️</Text>;
   }
 
   return ' ';
 };
 
-const getPointer = (state) => (
-  <Text color={state === 'error' ? 'red' : 'yellow'}>{figures.pointer}</Text>
-);
-
-const TaskRow = ({
-  label,
-  state,
-  status,
-  output,
-  spinnerType,
-  isExpanded,
-  children,
-}) => {
+const TaskRow = ({ label, state, status, spinnerType, children }) => {
   const childrenArray = React.Children.toArray(children);
   const listChildren = childrenArray.filter((node) =>
     React.isValidElement(node)
   );
   let icon =
     state === 'loading' ? (
-      <Text color="cyan">
+      <Text color="gray">
         <Spinner type={spinnerType} />
       </Text>
     ) : (
       getSymbol(state)
     );
-
-  if (isExpanded) {
-    icon = getPointer(state);
-  }
+  const isCacheState = state === 'local-cache' || state === 'remote-cache';
 
   return (
     <Box flexDirection="column">
       <Box>
-        <Box marginRight={1}>
+        <Box marginRight={isCacheState ? 0 : 2}>
           <Text>{icon}</Text>
         </Box>
-        <Text> {label}</Text>
+        <Text
+          color={
+            state === 'success'
+              ? 'green'
+              : state === 'error'
+              ? 'red'
+              : isCacheState
+              ? 'cyan'
+              : 'white'
+          }
+        >
+          {' '}
+          {label}
+        </Text>
         {status ? (
           <Box marginLeft={1}>
             <Text dimColor>[{status}]</Text>
           </Box>
         ) : undefined}
       </Box>
-      {output ? (
-        <Box marginLeft={4} marginRight={2}>
-          <Text color="gray">{output}</Text>
-        </Box>
-      ) : undefined}
-      {isExpanded && listChildren.length > 0 && (
-        <Box flexDirection="column" marginLeft={2}>
-          {listChildren}
-        </Box>
-      )}
     </Box>
   );
 };
@@ -92,11 +88,17 @@ TaskRow.propTypes = {
     PropTypes.element,
   ]),
   label: PropTypes.string.isRequired,
-  state: PropTypes.oneOf(['pending', 'loading', 'success', 'warning', 'error']),
+  state: PropTypes.oneOf([
+    'pending',
+    'loading',
+    'success',
+    'warning',
+    'error',
+    'local-cache',
+    'remote-cache',
+  ]),
   status: PropTypes.string,
-  output: PropTypes.string,
   spinnerType: PropTypes.oneOf(possibleSpinnerNames),
-  isExpanded: PropTypes.bool,
 };
 
 TaskRow.defaultProps = {
