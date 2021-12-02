@@ -200,12 +200,12 @@ export function RunMany({ tasksState }) {
     });
   }, [tasksState.tasks]);
 
-  const items = [
-    {
-      id: '1',
-      title: 'Projects',
-    },
-  ];
+  const isEveryTaskSuccessfullyComplete = taskList.every(
+    (task) => task.state === 'success'
+  );
+
+  const failedTasks: { projectName: string; output: string }[] =
+    taskList.filter((task) => task.state === 'error');
 
   // const shouldStopTimer = isEveryTaskSuccessfullyComplete;
 
@@ -215,21 +215,38 @@ export function RunMany({ tasksState }) {
 
   return (
     <>
-      {/* <Static items={items}>
-        {(test) => (
-          <Box marginTop={1} key={test.id} marginX={2}>
-            <Text color="cyan">&gt; </Text>
-            <Text color="cyan" inverse bold>
-              {' '}
-              NX{' '}
-            </Text>
-            <Text dimColor> Running target </Text>
-            <Text bold>{tasksState.target}</Text>
-            <Text dimColor> for </Text>
-            <Text bold>{tasksState.projectNames.length} project(s):</Text>
+      <Static items={failedTasks}>
+        {(task, i) => (
+          <Box
+            key={task.projectName}
+            marginTop={1}
+            flexDirection="column"
+            marginX={2}
+          >
+            <Box flexDirection="column">
+              <Text
+                bold={true}
+                color="red"
+              >{`> nx run ${task.projectName}:${tasksState.target}`}</Text>
+
+              <Box marginLeft={2}>
+                <Text>{task.output}</Text>
+              </Box>
+            </Box>
+
+            {i === failedTasks.length - 1 && (
+              <Box marginY={1}>
+                <Text color="gray" dimColor={true}>
+                  {
+                    '———————————————————————————————————————————————————————————————————————'
+                  }
+                </Text>
+              </Box>
+            )}
           </Box>
         )}
-      </Static> */}
+      </Static>
+
       <Box marginTop={1} marginX={2}>
         <RunManyTitle
           tasksState={tasksState}
@@ -269,7 +286,7 @@ export function RunMany({ tasksState }) {
             </Box>
           </Box> */}
 
-      <Box>
+      <Box marginBottom={!isEveryTaskSuccessfullyComplete ? 2 : 0}>
         <TaskList tasksState={tasksState} taskList={taskList}></TaskList>
       </Box>
     </>

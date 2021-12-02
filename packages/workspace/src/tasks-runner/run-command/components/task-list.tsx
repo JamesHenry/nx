@@ -1,7 +1,6 @@
 // @ts-check
 import { Box, Text } from 'ink';
 import * as React from 'react';
-import { Divider } from './divider';
 import { TaskRow } from './task-row';
 
 export function TaskList({ tasksState, taskList }) {
@@ -21,7 +20,7 @@ export function TaskList({ tasksState, taskList }) {
     <Box paddingLeft={5} flexDirection="column">
       {runningTasks.length > 0 && (
         <Box marginY={1}>
-          <Text color="grey" dimColor={true}>{`Executing ${
+          <Text color="grey" dimColor={false}>{`Executing ${
             runningTasks.length
           }/${
             pendingTasks.length + runningTasks.length
@@ -36,6 +35,7 @@ export function TaskList({ tasksState, taskList }) {
             label={task.projectName}
             state={task.state}
             status={task.status}
+            muted={false}
           />
         ))}
       </Box>
@@ -49,6 +49,7 @@ export function TaskList({ tasksState, taskList }) {
                 label={`${successfulTasks.length}/${numCompletedTasks} succeeded`}
                 state="success"
                 status=""
+                muted={failedTasks.length > 0}
               />
             )}
           </Box>
@@ -59,9 +60,10 @@ export function TaskList({ tasksState, taskList }) {
             {failedTasks.length > 0 && (
               <TaskRow
                 key="failed"
-                label={`${failedTasks.length}/${numCompletedTasks} failed`}
+                label={`${failedTasks.length}/${numCompletedTasks} failed (see output above)`}
                 state="error"
                 status=""
+                muted={false}
               />
             )}
           </Box>
@@ -78,6 +80,7 @@ export function TaskList({ tasksState, taskList }) {
                 label={`${locallyCachedTasks.length} results retrieved from local cache`}
                 state="local-cache"
                 status=""
+                muted={false}
               />
             )}
 
@@ -87,37 +90,11 @@ export function TaskList({ tasksState, taskList }) {
                 label={`${cloudCachedTasks.length} results retrieved from cloud cache`}
                 state="cloud-cache"
                 status=""
+                muted={false}
               />
             )}
           </Box>
         )}
-
-      {failedTasks.length > 0 && (
-        <Box flexDirection="column">
-          <Box marginY={1}>
-            <Text color="gray" dimColor={true}>
-              {
-                '———————————————————————————————————————————————————————————————————————'
-              }
-            </Text>
-          </Box>
-
-          {failedTasks.map((task, i) => {
-            return (
-              <Box key={task.projectName} flexDirection="column">
-                <Text
-                  bold={true}
-                  color="red"
-                >{`> nx run ${task.projectName}:${tasksState.target}`}</Text>
-
-                <Box marginLeft={2}>
-                  <Text>{task.output}</Text>
-                </Box>
-              </Box>
-            );
-          })}
-        </Box>
-      )}
     </Box>
   );
 }

@@ -9,7 +9,7 @@ const possibleSpinnerNames = Object.keys(spinners).filter(
   (spinnerName) => spinnerName !== 'default'
 );
 
-const getSymbol = (state) => {
+const getSymbol = (state, muted) => {
   if (state === 'warning') {
     return <Text color="yellow">{figures.warning}</Text>;
   }
@@ -19,7 +19,9 @@ const getSymbol = (state) => {
   }
 
   if (state === 'success') {
-    return <Text color="green">{figures.tick}</Text>;
+    return (
+      <Text color={muted === true ? 'gray' : 'green'}>{figures.tick}</Text>
+    );
   }
 
   if (state === 'pending') {
@@ -37,7 +39,7 @@ const getSymbol = (state) => {
   return ' ';
 };
 
-const TaskRow = ({ label, state, status, spinnerType, children }) => {
+const TaskRow = ({ label, state, muted, status, spinnerType, children }) => {
   const childrenArray = React.Children.toArray(children);
   const listChildren = childrenArray.filter((node) =>
     React.isValidElement(node)
@@ -48,7 +50,7 @@ const TaskRow = ({ label, state, status, spinnerType, children }) => {
         <Spinner type={spinnerType} />
       </Text>
     ) : (
-      getSymbol(state)
+      getSymbol(state, muted)
     );
   const isCacheState = state === 'local-cache' || state === 'remote-cache';
 
@@ -61,7 +63,9 @@ const TaskRow = ({ label, state, status, spinnerType, children }) => {
         <Text
           color={
             state === 'success'
-              ? 'green'
+              ? muted === true
+                ? 'gray'
+                : 'green'
               : state === 'error'
               ? 'red'
               : isCacheState
