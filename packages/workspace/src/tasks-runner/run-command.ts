@@ -33,7 +33,7 @@ async function getTerminalOutputLifeCycle(
   projectNames: string[],
   tasks: Task[],
   nxArgs: NxArgs,
-  overrides: any,
+  overrides: Record<string, unknown>,
   runnerOptions: any
 ): Promise<{ lifeCycle: LifeCycle; renderIsDone: Promise<void> }> {
   if (terminalOutputStrategy === 'run-one') {
@@ -59,6 +59,7 @@ async function getTerminalOutputLifeCycle(
       projectNames,
       tasks,
       args: nxArgs,
+      overrides,
     });
   } else {
     return {

@@ -1,5 +1,5 @@
 import type { Task } from '@nrwl/devkit';
-import { output, TaskCacheStatus } from '../utilities/output';
+import { neoOutput, TaskCacheStatus } from '../utilities/output';
 import { LifeCycle } from './life-cycle';
 import { TaskStatus } from './tasks-runner';
 import { getCommandArgsForTask } from './utils';
@@ -25,80 +25,86 @@ export class RunManyTerminalOutputLifeCycle implements LifeCycle {
       if (this.args.configuration) {
         description += ` that are configured for "${this.args.configuration}"`;
       }
-      output.logSingleLine(`No projects ${description} were run`);
+      neoOutput.logSingleLine(`No projects ${description} were run`);
       return;
     }
 
     const bodyLines = this.projectNames.map(
-      (affectedProject) => `${output.colors.gray('-')} ${affectedProject}`
+      (affectedProject) => ` ${neoOutput.colors.gray('-')} ${affectedProject}`
     );
     if (Object.keys(this.taskOverrides).length > 0) {
       bodyLines.push('');
-      bodyLines.push(`${output.colors.gray('With flags:')}`);
+      bodyLines.push(`${neoOutput.colors.gray('With flags:')}`);
       Object.entries(this.taskOverrides)
         .map(([flag, value]) => `  --${flag}=${value}`)
         .forEach((arg) => bodyLines.push(arg));
     }
 
-    let title = `${output.colors.gray('Running target')} ${
+    let title = `Running target ${neoOutput.bold(
       this.args.target
-    } ${output.colors.gray(`for`)} ${this.projectNames.length} project(s)`;
+    )} for ${neoOutput.bold(this.projectNames.length)} projects`;
     const dependentTasksCount = this.tasks.length - this.projectNames.length;
     if (dependentTasksCount > 0) {
-      title += ` ${output.colors.gray(`and`)} ${
-        this.tasks.length - this.projectNames.length
-      } task(s) ${output.colors.gray(`they depend on`)}`;
+      title += ` and ${neoOutput.bold(
+        dependentTasksCount
+      )} task(s) they depend on`;
     }
     title += ':';
 
-    output.log({
+    neoOutput.log({
+      color: 'cyan',
       title,
       bodyLines,
     });
 
-    output.addVerticalSeparatorWithoutNewLines();
+    neoOutput.addVerticalSeparatorWithoutNewLines('cyan');
   }
 
   endCommand(): void {
-    output.addNewline();
-    output.addVerticalSeparatorWithoutNewLines();
+    neoOutput.addNewline();
 
     if (this.failedTasks.length === 0) {
+      neoOutput.addVerticalSeparatorWithoutNewLines('green');
+
       const bodyLines =
         this.cachedTasks.length > 0
           ? [
-              output.colors.gray(
-                `Nx read the output from cache instead of running the command for ${this.cachedTasks.length} out of ${this.tasks.length} tasks.`
+              neoOutput.colors.gray(
+                `Nx read the output from the cache instead of running the command for ${this.cachedTasks.length} out of ${this.tasks.length} tasks.`
               ),
             ]
           : [];
 
-      output.success({
-        title: `Running target "${this.args.target}" succeeded`,
+      neoOutput.success({
+        title: `Successfully ran target ${neoOutput.bold(
+          this.args.target
+        )} for ${neoOutput.bold(this.projectNames.length)} projects`,
         bodyLines,
       });
     } else {
+      neoOutput.addVerticalSeparatorWithoutNewLines('red');
+
       const bodyLines = [];
       if (this.skippedTasks.length > 0) {
         bodyLines.push(
-          output.colors.gray(
+          neoOutput.colors.gray(
             'Tasks not run because their dependencies failed:'
           ),
           '',
           ...this.skippedTasks.map(
-            (task) => `${output.colors.gray('-')} ${task.id}`
+            (task) => `${neoOutput.colors.gray('-')} ${task.id}`
           ),
           ''
         );
       }
       bodyLines.push(
-        output.colors.gray('Failed tasks:'),
+        neoOutput.colors.gray('Failed tasks:'),
         '',
         ...this.failedTasks.map(
-          (task) => `${output.colors.gray('-')} ${task.id}`
+          (task) => `${neoOutput.colors.gray('-')} ${task.id}`
         )
       );
-      output.error({
+      neoOutput.error({
         title: `Running target "${this.args.target}" failed`,
         bodyLines,
       });
@@ -127,7 +133,10 @@ export class RunManyTerminalOutputLifeCycle implements LifeCycle {
     terminalOutput: string
   ) {
     const args = getCommandArgsForTask(task);
-    output.logCommand(`nx ${args.join(' ')}`, cacheStatus);
-    process.stdout.write(terminalOutput);
+    neoOutput.logCommand(
+      `${args.filter((a) => a !== 'run').join(' ')}`,
+      cacheStatus
+    );
+    neoOutput.writeCommandOutputBlock(terminalOutput);
   }
 }

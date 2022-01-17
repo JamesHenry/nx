@@ -1,10 +1,10 @@
+import type { LifeCycle } from '@nrwl/workspace/src/tasks-runner/life-cycle';
 import * as chalk from 'chalk';
 import { dots } from 'cli-spinners';
 import { EOL } from 'os';
 import * as readline from 'readline';
 import type { Task, TaskStatus } from '../tasks-runner';
 import { prettyTime } from './pretty-time';
-import { LifeCycle } from '@nrwl/workspace/src/tasks-runner/life-cycle';
 
 const X_PADDING = ' ';
 
@@ -20,6 +20,7 @@ function writeLine(line: string) {
 }
 
 function writeCommandOutputBlock(output: string) {
+  output = output || '';
   const additionalXPadding = '      ';
   const lines = output.split(EOL);
   /**
@@ -47,24 +48,46 @@ export async function createOutputRenderer({
   projectNames,
   tasks,
   args,
+  overrides,
 }: {
   projectNames: string[];
   tasks: Task[];
-  args: { target?: string; configuration?: string };
+  args: { target?: string; configuration?: string; parallel?: number };
+  overrides: Record<string, unknown>;
 }): Promise<{ lifeCycle: LifeCycle; renderIsDone: Promise<void> }> {
+  let resolveRenderIsDonePromise: (value: void) => void;
+  const renderIsDone = new Promise<void>(
+    (resolve) => (resolveRenderIsDonePromise = resolve)
+  ).then(() => clearRenderInterval());
+
+  function clearRenderInterval() {
+    if (renderProjectRowsIntervalId) {
+      clearInterval(renderProjectRowsIntervalId);
+    }
+  }
+
+  function teardown() {
+    clearRenderInterval();
+    if (resolveRenderIsDonePromise) {
+      resolveRenderIsDonePromise();
+    }
+  }
+
+  process.on('exit', () => teardown());
+  process.on('SIGINT', () => teardown());
+  process.on('unhandledRejection', () => teardown());
+  process.on('uncaughtException', () => teardown());
+
   const lifeCycle = {} as any;
+  const isVerbose = overrides.verbose === true;
 
   const start = process.hrtime();
   const figures = await import('figures');
 
-  let resolveIsRenderCompletePromise: (value: void) => void;
-  const renderIsDone = new Promise<void>(
-    (resolve) => (resolveIsRenderCompletePromise = resolve)
-  );
-
   const totalTasks = tasks.length;
-  const targetName = args.target;
   const totalProjects = projectNames.length;
+  const totalDependentTasks = totalTasks - totalProjects;
+  const targetName = args.target;
   const projectRows = projectNames.map((projectName) => {
     return {
       projectName,
@@ -73,6 +96,10 @@ export async function createOutputRenderer({
   });
 
   const tasksToTerminalOutputs: Record<string, string> = {};
+  const tasksToProcessStartTimes: Record<
+    string,
+    ReturnType<NodeJS.HRTime>
+  > = {};
   let hasTaskOutput = false;
   let pinnedFooterNumLines = 0;
   let totalCompletedTasks = 0;
@@ -91,7 +118,7 @@ export async function createOutputRenderer({
     }
   };
 
-  const renderPinnedFooter = (lines: string[], dividerColor = 'gray') => {
+  const renderPinnedFooter = (lines: string[], dividerColor = 'cyan') => {
     let additionalLines = 0;
     if (hasTaskOutput) {
       let divider = '';
@@ -123,25 +150,42 @@ export async function createOutputRenderer({
     switch (status) {
       case 'local-cache':
         writeLine(
-          chalk.green(figures.tick) +
-            chalk.dim.white('  nx run ') +
-            chalk.white(task.id) +
-            '  ' +
-            chalk.gray('[from cache]')
+          `${
+            chalk.green(figures.tick) + chalk.dim('  nx run ') + task.id
+          }  ${chalk.gray('[local cache]')}`
         );
+        if (isVerbose) {
+          process.stdout.write(EOL);
+          writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
+        }
         break;
       case 'remote-cache':
+        writeLine(
+          `${
+            chalk.green(figures.tick) + chalk.dim('  nx run ') + task.id
+          }  ${chalk.gray('[remote cache]')}`
+        );
+        if (isVerbose) {
+          process.stdout.write(EOL);
+          writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
+        }
+        break;
+      case 'success': {
+        const timeTakenText = prettyTime(
+          process.hrtime(tasksToProcessStartTimes[task.id])
+        );
         writeLine(
           chalk.green(figures.tick) +
             chalk.dim('  nx run ') +
             task.id +
-            '  ☁️  ' +
-            chalk.gray('[from cloud cache]')
+            chalk.dim.gray(` (${timeTakenText})`)
         );
+        if (isVerbose) {
+          process.stdout.write(EOL);
+          writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
+        }
         break;
-      case 'success':
-        writeLine(chalk.green(figures.tick) + chalk.dim('  nx run ') + task.id);
-        break;
+      }
       case 'failure':
         process.stdout.write(EOL);
         writeLine(
@@ -163,13 +207,12 @@ export async function createOutputRenderer({
 
     const additionalFooterRows: string[] = [''];
     const runningTasks = projectRows.filter((row) => row.status === 'running');
-    const pendingTasks = projectRows.filter((row) => row.status === 'pending');
-    const remainingTasks = pendingTasks.length + runningTasks.length;
+    const remainingTasks = totalTasks - totalCompletedTasks;
 
     if (runningTasks.length > 0) {
       additionalFooterRows.push(
-        chalk.dim.cyan(
-          `   ${figures.arrowRight}    Executing ${
+        chalk.dim(
+          `   ${chalk.cyan(figures.arrowRight)}    Executing ${
             runningTasks.length
           }/${remainingTasks} remaining tasks${
             runningTasks.length > 1 ? ' in parallel' : ''
@@ -179,10 +222,29 @@ export async function createOutputRenderer({
       additionalFooterRows.push('');
       for (const projectRow of runningTasks) {
         additionalFooterRows.push(
-          `   ${chalk.dim.cyan(
-            dots.frames[projectRowsCurrentFrame]
-          )}    ${chalk.dim.white(projectRow.projectName)}`
+          `   ${chalk.dim.cyan(dots.frames[projectRowsCurrentFrame])}    ${
+            chalk.dim('nx run ') + projectRow.projectName + ':' + targetName
+          }`
         );
+      }
+      /**
+       * Reduce layout thrashing by ensuring that there is a relatively consistent
+       * height for the area in which the task rows are rendered.
+       *
+       * We can look at the parallel flag to know how many rows are likely to be
+       * needed in the common case and always render that at least that many.
+       */
+      if (
+        totalCompletedTasks !== totalTasks &&
+        Number.isInteger(args.parallel) &&
+        runningTasks.length < args.parallel
+      ) {
+        // Don't bother with this optimization if there are fewer tasks remaining than rows required
+        if (remainingTasks >= args.parallel) {
+          for (let i = runningTasks.length; i < args.parallel; i++) {
+            additionalFooterRows.push('');
+          }
+        }
       }
     }
 
@@ -192,32 +254,51 @@ export async function createOutputRenderer({
 
     if (totalFailedTasks > 0) {
       additionalFooterRows.push(
-        `   ${chalk.red(figures.cross)}    ${totalFailedTasks}${chalk.dim(
-          `/${totalCompletedTasks}`
-        )} failed`
+        `   ${chalk.red(
+          figures.cross
+        )}    ${totalFailedTasks}${`/${totalCompletedTasks}`} failed`
       );
     }
 
     if (totalSuccessfulTasks > 0) {
       additionalFooterRows.push(
-        `   ${chalk.green(figures.tick)}    ${totalSuccessfulTasks}${chalk.dim(
-          `/${totalCompletedTasks}`
-        )} succeeded ${chalk.gray(`[${totalCachedTasks} read from cache]`)}`
+        `   ${chalk.green(
+          figures.tick
+        )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} succeeded ${chalk.gray(
+          `[${totalCachedTasks} read from cache]`
+        )}`
       );
     }
 
     clearPinnedFooter();
 
     if (additionalFooterRows.length > 1) {
-      const pinnedFooterLines = [
-        applyNxPrefix(
-          'cyan',
-          chalk.gray(
-            `Running target ${chalk.bold.white(
-              targetName
-            )} for ${chalk.bold.white(totalProjects)} project(s)`
+      let text = `Running target ${chalk.bold.cyan(
+        targetName
+      )} for ${chalk.bold.cyan(totalProjects)} projects`;
+      if (totalDependentTasks > 0) {
+        text += ` and ${chalk.bold(
+          totalDependentTasks
+        )} task(s) they depend on`;
+      }
+
+      const taskOverridesRows = [];
+      if (Object.keys(overrides).length > 0) {
+        const leftPadding = `${X_PADDING}       `;
+        taskOverridesRows.push('');
+        taskOverridesRows.push(
+          `${leftPadding}${chalk.dim.cyan('With additional flags:')}`
+        );
+        Object.entries(overrides)
+          .map(([flag, value]) =>
+            chalk.dim.cyan(`${leftPadding}  --${flag}=${value}`)
           )
-        ),
+          .forEach((arg) => taskOverridesRows.push(arg));
+      }
+
+      const pinnedFooterLines = [
+        applyNxPrefix('cyan', chalk.cyan(text)),
+        ...taskOverridesRows,
         ...additionalFooterRows,
       ];
 
@@ -234,21 +315,24 @@ export async function createOutputRenderer({
 
   lifeCycle.startCommand = (params) => {
     if (totalProjects <= 0) {
-      let description = `with target "${targetName}"`;
-      if (params.args.configuration) {
+      let description = `with target ${chalk.white.bold(targetName)}`;
+      if (params?.args.configuration) {
         description += ` that are configured for "${params.args.configuration}"`;
       }
       renderPinnedFooter([
         '',
         applyNxPrefix('gray', `No projects ${description} were run`),
       ]);
-      resolveIsRenderCompletePromise();
+      resolveRenderIsDonePromise();
       return;
     }
     renderPinnedFooter([]);
   };
 
-  lifeCycle.startTasks = (tasks) => {
+  lifeCycle.startTasks = (tasks: Task[]) => {
+    for (const task of tasks) {
+      tasksToProcessStartTimes[task.id] = process.hrtime();
+    }
     for (const projectRow of projectRows) {
       const matchedTask = tasks.find(
         (t) => t.target.project === projectRow.projectName
@@ -294,22 +378,25 @@ export async function createOutputRenderer({
     }
 
     if (totalCompletedTasks === totalTasks) {
-      if (renderProjectRowsIntervalId) {
-        clearInterval(renderProjectRowsIntervalId);
-      }
+      clearRenderInterval();
       const timeTakenText = prettyTime(process.hrtime(start));
 
       clearPinnedFooter();
 
       if (totalSuccessfulTasks === totalTasks) {
+        let text = `Successfully ran target ${chalk.bold(
+          targetName
+        )} for ${chalk.bold(totalProjects)} projects`;
+        if (totalDependentTasks > 0) {
+          text += ` and ${chalk.bold(
+            totalDependentTasks
+          )} task(s) they depend on`;
+        }
+
         const pinnedFooterLines = [
           applyNxPrefix(
             'green',
-            chalk.green(
-              `Successfully ran target ${chalk.bold(
-                targetName
-              )} for ${chalk.bold(totalProjects)} projects`
-            ) + chalk.dim.white(` (${timeTakenText})`)
+            chalk.green(text) + chalk.dim.white(` (${timeTakenText})`)
           ),
         ];
         if (totalCachedTasks > 0) {
@@ -321,33 +408,35 @@ export async function createOutputRenderer({
         }
         renderPinnedFooter(pinnedFooterLines, 'green');
       } else {
+        let text = `Ran target ${chalk.bold(targetName)} for ${chalk.bold(
+          totalProjects
+        )} projects`;
+        if (totalDependentTasks > 0) {
+          text += ` and ${chalk.bold(
+            totalDependentTasks
+          )} task(s) they depend on`;
+        }
+
         renderPinnedFooter(
           [
             applyNxPrefix(
               'red',
-              chalk.red(
-                `Ran target ${chalk.bold(targetName)} for ${chalk.bold(
-                  totalProjects
-                )} projects`
-              ) + chalk.dim.white(` (${timeTakenText})`)
+              chalk.red(text) + chalk.dim.white(` (${timeTakenText})`)
             ),
             '',
-            `   ${chalk.red(figures.cross)}    ${totalFailedTasks}${chalk.dim(
-              `/${totalCompletedTasks}`
-            )} failed`,
+            `   ${chalk.red(
+              figures.cross
+            )}    ${totalFailedTasks}${`/${totalCompletedTasks}`} failed`,
             `   ${chalk.gray(
               figures.tick
-            )}    ${totalSuccessfulTasks}${chalk.dim(
-              `/${totalCompletedTasks}`
-            )} succeeded ${chalk.gray(
+            )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} succeeded ${chalk.gray(
               `[${totalCachedTasks} read from cache]`
             )}`,
           ],
           'red'
         );
       }
-
-      resolveIsRenderCompletePromise();
+      resolveRenderIsDonePromise();
     }
   };
 
