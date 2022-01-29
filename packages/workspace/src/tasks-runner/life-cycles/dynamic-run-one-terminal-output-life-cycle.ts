@@ -6,6 +6,13 @@ import { output } from '../../utilities/output';
 import type { LifeCycle } from '../life-cycle';
 import type { Task, TaskStatus } from '../tasks-runner';
 import { prettyTime } from './pretty-time';
+import { StaticRunOneTerminalOutputLifeCycle } from './static-run-one-terminal-output-life-cycle';
+
+type State =
+  | 'EXECUTING_DEPENDENT_TARGETS'
+  | 'EXECUTING_INITIATING_PROJECT_TARGET'
+  | 'COMPLETED_SUCCESSFULLY'
+  | 'COMPLETED_WITH_ERRORS';
 
 /**
  * The following function is responsible for creating a life cycle with dynamic
@@ -14,12 +21,14 @@ import { prettyTime } from './pretty-time';
  *
  * In CI environments the static equivalent of this life cycle should be used.
  */
-export async function createRunManyDynamicOutputRenderer({
+export async function createRunOneDynamicOutputRenderer({
+  initiatingProject,
   projectNames,
   tasks,
   args,
   overrides,
 }: {
+  initiatingProject: string;
   projectNames: string[];
   tasks: Task[];
   args: { target?: string; configuration?: string; parallel?: number };
@@ -53,16 +62,18 @@ export async function createRunManyDynamicOutputRenderer({
 
   const totalTasks = tasks.length;
   const totalProjects = projectNames.length;
-  const totalDependentTasks = totalTasks - totalProjects;
-  const targetName = args.target;
-  const projectRows = projectNames.map((projectName) => {
-    return {
-      projectName,
-      status: 'pending',
-    };
-  });
+  const totalDependentTasks = totalTasks - 1;
+  const totalTasksFromInitiatingProject = tasks.filter(
+    (t) => t.target.project === initiatingProject
+  ).length;
+  // Tasks from initiating project are treated differently, they forward their output
+  const totalDependentTasksNotFromInitiatingProject =
+    totalTasks - totalTasksFromInitiatingProject;
 
-  const tasksToTerminalOutputs: Record<string, string> = {};
+  const targetName = args.target;
+
+  let state: State = 'EXECUTING_DEPENDENT_TARGETS';
+
   const tasksToProcessStartTimes: Record<
     string,
     ReturnType<NodeJS.HRTime>
@@ -85,148 +96,50 @@ export async function createRunManyDynamicOutputRenderer({
     }
   };
 
-  const renderPinnedFooter = (lines: string[], dividerColor = 'cyan') => {
+  const renderPinnedFooter = (
+    lines: string[],
+    dividerColor = 'cyan',
+    renderDivider = true
+  ) => {
     let additionalLines = 0;
-    if (hasTaskOutput) {
+    if (renderDivider) {
       output.addVerticalSeparator(dividerColor);
       additionalLines += 3;
     }
     // Create vertical breathing room for cursor position under the pinned footer
-    lines.push('');
+    if (renderDivider) {
+      lines.push('');
+    }
     for (const line of lines) {
       process.stdout.write(output.X_PADDING + line + EOL);
     }
     pinnedFooterNumLines = lines.length + additionalLines;
   };
 
-  const printTaskResult = (task: Task, status: TaskStatus) => {
-    clearPinnedFooter();
-    // If this is the very first output, add some vertical breathing room
-    if (!hasTaskOutput) {
-      output.addNewline();
-    }
-    hasTaskOutput = true;
-
-    switch (status) {
-      case 'local-cache':
-        writeLine(
-          `${
-            output.colors.green(figures.tick) +
-            output.dim('  nx run ') +
-            task.id
-          }  ${output.colors.gray('[local cache]')}`
-        );
-        if (isVerbose) {
-          writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
-        }
-        break;
-      case 'local-cache-kept-existing':
-        writeLine(
-          `${
-            output.colors.green(figures.tick) +
-            output.dim('  nx run ') +
-            task.id
-          }  ${output.colors.gray(
-            '[existing outputs match the cache, left as is]'
-          )}`
-        );
-        if (isVerbose) {
-          writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
-        }
-        break;
-      case 'remote-cache':
-        writeLine(
-          `${
-            output.colors.green(figures.tick) +
-            output.dim('  nx run ') +
-            task.id
-          }  ${output.colors.gray('[remote cache]')}`
-        );
-        if (isVerbose) {
-          writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
-        }
-        break;
-      case 'success': {
-        const timeTakenText = prettyTime(
-          process.hrtime(tasksToProcessStartTimes[task.id])
-        );
-        writeLine(
-          output.colors.green(figures.tick) +
-            output.dim('  nx run ') +
-            task.id +
-            output.dim.gray(` (${timeTakenText})`)
-        );
-        if (isVerbose) {
-          writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
-        }
-        break;
-      }
-      case 'failure':
-        output.addNewline();
-        writeLine(
-          output.colors.red(figures.cross) +
-            output.dim('  nx run ') +
-            output.colors.red(task.id)
-        );
-        writeCommandOutputBlock(tasksToTerminalOutputs[task.id]);
-        break;
-    }
-
-    delete tasksToTerminalOutputs[task.id];
-    renderPinnedFooter([]);
-    renderProjectRows();
-  };
-
-  const renderProjectRows = () => {
+  const renderProjectRows = (renderDivider = true) => {
     const max = dots.frames.length - 1;
     const curr = projectRowsCurrentFrame;
     projectRowsCurrentFrame = curr >= max ? 0 : curr + 1;
 
     const additionalFooterRows: string[] = [''];
-    const runningTasks = projectRows.filter((row) => row.status === 'running');
-    const remainingTasks = totalTasks - totalCompletedTasks;
+    const remainingDependentTasksNotFromInitiatingProject =
+      totalDependentTasksNotFromInitiatingProject - totalCompletedTasks;
 
-    if (runningTasks.length > 0) {
-      additionalFooterRows.push(
-        output.dim(
-          `   ${output.colors.cyan(figures.arrowRight)}    Executing ${
-            runningTasks.length
-          }/${remainingTasks} remaining tasks${
-            runningTasks.length > 1 ? ' in parallel' : ''
-          }...`
-        )
-      );
-      additionalFooterRows.push('');
-      for (const projectRow of runningTasks) {
+    switch (state) {
+      case 'EXECUTING_DEPENDENT_TARGETS':
         additionalFooterRows.push(
-          `   ${output.dim.cyan(dots.frames[projectRowsCurrentFrame])}    ${
-            output.dim('nx run ') + projectRow.projectName + ':' + targetName
-          }`
+          output.dim(
+            `   ${output.dim.cyan(
+              dots.frames[projectRowsCurrentFrame]
+            )}    Waiting on ${remainingDependentTasksNotFromInitiatingProject} dependent project tasks before running tasks from ${output.colors.white(
+              `${initiatingProject}`
+            )}...`
+          )
         );
-      }
-      /**
-       * Reduce layout thrashing by ensuring that there is a relatively consistent
-       * height for the area in which the task rows are rendered.
-       *
-       * We can look at the parallel flag to know how many rows are likely to be
-       * needed in the common case and always render that at least that many.
-       */
-      if (
-        totalCompletedTasks !== totalTasks &&
-        Number.isInteger(args.parallel) &&
-        runningTasks.length < args.parallel
-      ) {
-        // Don't bother with this optimization if there are fewer tasks remaining than rows required
-        if (remainingTasks >= args.parallel) {
-          for (let i = runningTasks.length; i < args.parallel; i++) {
-            additionalFooterRows.push('');
-          }
+        if (totalSuccessfulTasks > 0 || totalFailedTasks > 0) {
+          additionalFooterRows.push('');
         }
-      }
-    }
-
-    if (totalSuccessfulTasks > 0 || totalFailedTasks > 0) {
-      additionalFooterRows.push('');
+        break;
     }
 
     if (totalFailedTasks > 0) {
@@ -241,7 +154,7 @@ export async function createRunManyDynamicOutputRenderer({
       additionalFooterRows.push(
         `   ${output.colors.green(
           figures.tick
-        )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} succeeded ${output.colors.gray(
+        )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} dependent project tasks succeeded ${output.colors.gray(
           `[${totalCachedTasks} read from cache]`
         )}`
       );
@@ -252,11 +165,11 @@ export async function createRunManyDynamicOutputRenderer({
     if (additionalFooterRows.length > 1) {
       let text = `Running target ${output.bold.cyan(
         targetName
-      )} for ${output.bold.cyan(totalProjects)} projects`;
+      )} for project ${output.bold.cyan(initiatingProject)}`;
       if (totalDependentTasks > 0) {
         text += ` and ${output.bold(
           totalDependentTasks
-        )} task(s) they depend on`;
+        )} task(s) it depends on`;
       }
 
       const taskOverridesRows = [];
@@ -284,41 +197,32 @@ export async function createRunManyDynamicOutputRenderer({
         pinnedFooterLines.unshift('');
       }
 
-      renderPinnedFooter(pinnedFooterLines);
+      renderPinnedFooter(
+        pinnedFooterLines,
+        'cyan',
+        renderDivider && state !== 'EXECUTING_DEPENDENT_TARGETS'
+      );
     } else {
       renderPinnedFooter([]);
     }
   };
 
   lifeCycle.startCommand = () => {
-    if (totalProjects <= 0) {
-      let description = `with target ${output.colors.white.bold(targetName)}`;
-      if (args.configuration) {
-        description += ` that are configured for "${args.configuration}"`;
-      }
-      renderPinnedFooter([
-        '',
-        output.applyNxPrefix('gray', `No projects ${description} were run`),
-      ]);
-      resolveRenderIsDonePromise();
-      return;
-    }
-    renderPinnedFooter([]);
+    renderProjectRows();
   };
 
   lifeCycle.endCommand = () => {
     clearRenderInterval();
     const timeTakenText = prettyTime(process.hrtime(start));
 
-    clearPinnedFooter();
     if (totalSuccessfulTasks === totalTasks) {
       let text = `Successfully ran target ${output.bold(
         targetName
-      )} for ${output.bold(totalProjects)} projects`;
+      )} for project ${output.bold(initiatingProject)}`;
       if (totalDependentTasks > 0) {
         text += ` and ${output.bold(
           totalDependentTasks
-        )} task(s) they depend on`;
+        )} task(s) it depends on`;
       }
 
       const taskOverridesRows = [];
@@ -357,7 +261,7 @@ export async function createRunManyDynamicOutputRenderer({
       if (totalDependentTasks > 0) {
         text += ` and ${output.bold(
           totalDependentTasks
-        )} task(s) they depend on`;
+        )} task(s) it depends on`;
       }
 
       const taskOverridesRows = [];
@@ -400,34 +304,35 @@ export async function createRunManyDynamicOutputRenderer({
   lifeCycle.startTasks = (tasks: Task[]) => {
     for (const task of tasks) {
       tasksToProcessStartTimes[task.id] = process.hrtime();
-    }
-    for (const projectRow of projectRows) {
-      const matchedTask = tasks.find(
-        (t) => t.target.project === projectRow.projectName
-      );
-      if (!matchedTask) {
-        continue;
+      if (
+        task.target.project === initiatingProject &&
+        state !== 'EXECUTING_INITIATING_PROJECT_TARGET'
+      ) {
+        state = 'EXECUTING_INITIATING_PROJECT_TARGET';
+        clearRenderInterval();
+        renderProjectRows(false);
+        output.addVerticalSeparator('cyan');
       }
-      projectRow.status = 'running';
     }
-    if (!renderProjectRowsIntervalId) {
+    if (
+      !renderProjectRowsIntervalId &&
+      state === 'EXECUTING_DEPENDENT_TARGETS'
+    ) {
       renderProjectRowsIntervalId = setInterval(renderProjectRows, 100);
     }
   };
 
-  lifeCycle.printTaskTerminalOutput = (task, _cacheStatus, output) => {
-    tasksToTerminalOutputs[task.id] = output;
+  lifeCycle.printTaskTerminalOutput = (task, cacheStatus, terminalOutput) => {
+    if (task.target.project === initiatingProject) {
+      output.logCommand(task.id, cacheStatus);
+      output.addNewline();
+      process.stdout.write(terminalOutput);
+    }
   };
 
   lifeCycle.endTasks = (taskResults) => {
     for (let t of taskResults) {
       totalCompletedTasks++;
-      const matchingProjectRow = projectRows.find(
-        (pr) => pr.projectName === t.task.target.project
-      );
-      if (matchingProjectRow) {
-        matchingProjectRow.status = t.status;
-      }
 
       switch (t.status) {
         case 'remote-cache':
@@ -443,7 +348,6 @@ export async function createRunManyDynamicOutputRenderer({
           totalFailedTasks++;
           break;
       }
-      printTaskResult(t.task, t.status);
     }
   };
 
