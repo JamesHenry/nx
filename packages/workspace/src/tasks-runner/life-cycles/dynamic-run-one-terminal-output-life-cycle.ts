@@ -60,6 +60,7 @@ export async function createRunOneDynamicOutputRenderer({
   const start = process.hrtime();
   const figures = await import('figures');
 
+  const tasksToTerminalOutputs: Record<string, string> = {};
   const totalTasks = tasks.length;
   const totalProjects = projectNames.length;
   const totalDependentTasks = totalTasks - 1;
@@ -99,7 +100,8 @@ export async function createRunOneDynamicOutputRenderer({
   const renderPinnedFooter = (
     lines: string[],
     dividerColor = 'cyan',
-    renderDivider = true
+    renderDivider = true,
+    skipPadding = false
   ) => {
     let additionalLines = 0;
     if (renderDivider) {
@@ -111,7 +113,7 @@ export async function createRunOneDynamicOutputRenderer({
       lines.push('');
     }
     for (const line of lines) {
-      process.stdout.write(output.X_PADDING + line + EOL);
+      process.stdout.write((skipPadding ? '' : output.X_PADDING) + line + EOL);
     }
     pinnedFooterNumLines = lines.length + additionalLines;
   };
@@ -130,36 +132,43 @@ export async function createRunOneDynamicOutputRenderer({
 
     switch (state) {
       case 'EXECUTING_DEPENDENT_TARGETS':
-        additionalFooterRows.push(
-          output.dim(
-            `   ${output.dim.cyan(
+        if (totalFailedTasks === 0) {
+          additionalFooterRows.push(
+            `   ${output.colors.cyan(
               dots.frames[projectRowsCurrentFrame]
-            )}    Waiting on ${remainingDependentTasksNotFromInitiatingProject} dependent project tasks before running tasks from ${output.colors.white(
-              `${initiatingProject}`
-            )}...`
-          )
-        );
-        if (totalSuccessfulTasks > 0 || totalFailedTasks > 0) {
-          additionalFooterRows.push('');
+            )}    ${output.colors.white.dim(
+              `Nx is waiting on ${remainingDependentTasksNotFromInitiatingProject} dependent project tasks before running tasks from`
+            )} ${output.colors.white(`${initiatingProject}`)}...`
+          );
+          if (totalSuccessfulTasks > 0) {
+            additionalFooterRows.push('');
+          }
         }
         break;
     }
 
     if (totalFailedTasks > 0) {
       additionalFooterRows.push(
-        `   ${output.colors.red(
-          figures.cross
-        )}    ${totalFailedTasks}${`/${totalCompletedTasks}`} failed`
+        output.colors.red.dim(
+          `   ${output.colors.red(
+            figures.cross
+          )}    ${totalFailedTasks}${`/${totalCompletedTasks}`} dependent project tasks failed (see below)`
+        )
       );
     }
 
     if (totalSuccessfulTasks > 0) {
+      // const color =
+      //   totalFailedTasks > 0 ? output.colors.gray.dim : output.colors.cyan.dim;
+      // const iconColor =
+      //   totalFailedTasks > 0 ? output.colors.gray : output.colors.cyan;
+
       // if (remainingDependentTasksNotFromInitiatingProject === 0) {
       additionalFooterRows.push(
-        output.colors.cyan.dim(
-          `   ${output.colors.cyan(
+        output.colors.gray(
+          `   ${output.colors.gray(
             figures.tick
-          )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} dependent project tasks succeeded ${output.colors.gray(
+          )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} dependent project tasks succeeded ${output.colors.gray.dim(
             `[${totalCachedTasks} read from cache]`
           )}`
         )
@@ -201,21 +210,26 @@ export async function createRunOneDynamicOutputRenderer({
           .forEach((arg) => taskOverridesRows.push(arg));
       }
 
-      const pinnedFooterLines = [
-        output.applyNxPrefix('cyan', output.colors.cyan(text)),
-        ...taskOverridesRows,
-        ...additionalFooterRows,
-      ];
+      // const pinnedFooterLines =
+      //   totalFailedTasks > 0
+      //     ? [...additionalFooterRows, '']
+      //     : [
+      //         '',
+      //         output.applyNxPrefix('cyan', output.colors.cyan(text)),
+      //         ...taskOverridesRows,
+      //         ...additionalFooterRows,
+      //       ];
 
       // Vertical breathing room when there isn't yet any output or divider
-      if (!hasTaskOutput) {
-        pinnedFooterLines.unshift('');
-      }
+      // if (!hasTaskOutput) {
+      //   pinnedFooterLines.unshift('');
+      // }
 
       renderPinnedFooter(
-        pinnedFooterLines,
-        'cyan',
-        renderDivider && state !== 'EXECUTING_DEPENDENT_TARGETS'
+        additionalFooterRows,
+        'gray',
+        renderDivider && state !== 'EXECUTING_DEPENDENT_TARGETS',
+        true
       );
     } else {
       renderPinnedFooter([]);
@@ -270,9 +284,9 @@ export async function createRunOneDynamicOutputRenderer({
       }
       renderPinnedFooter(pinnedFooterLines, 'green');
     } else {
-      let text = `Ran target ${output.bold(targetName)} for ${output.bold(
-        totalProjects
-      )} projects`;
+      let text = `Ran target ${output.bold(
+        targetName
+      )} for project ${output.bold(initiatingProject)}`;
       if (totalDependentTasks > 0) {
         text += ` and ${output.bold(
           totalDependentTasks
@@ -327,7 +341,7 @@ export async function createRunOneDynamicOutputRenderer({
         clearRenderInterval();
         renderProjectRows(false);
         if (totalDependentTasksNotFromInitiatingProject > 0) {
-          output.addVerticalSeparator('cyan');
+          output.addVerticalSeparator('gray');
         }
       }
     }
@@ -344,6 +358,8 @@ export async function createRunOneDynamicOutputRenderer({
       output.logCommand(task.id, cacheStatus);
       output.addNewline();
       process.stdout.write(terminalOutput);
+    } else {
+      tasksToTerminalOutputs[task.id] = terminalOutput;
     }
   };
 
@@ -363,8 +379,17 @@ export async function createRunOneDynamicOutputRenderer({
           break;
         case 'failure':
           totalFailedTasks++;
+          if (t.task.target.project !== initiatingProject) {
+            clearRenderInterval();
+            renderProjectRows(false);
+            output.addVerticalSeparator('red');
+            output.logCommand(t.task.id, t.status);
+            output.addNewline();
+            process.stdout.write(tasksToTerminalOutputs[t.task.id]);
+          }
           break;
       }
+      delete tasksToTerminalOutputs[t.task.id];
     }
   };
 
