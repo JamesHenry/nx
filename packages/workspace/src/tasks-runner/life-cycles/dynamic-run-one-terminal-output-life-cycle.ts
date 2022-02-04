@@ -117,6 +117,9 @@ export async function createRunOneDynamicOutputRenderer({
   };
 
   const renderProjectRows = (renderDivider = true) => {
+    if (totalDependentTasksNotFromInitiatingProject <= 0) {
+      return;
+    }
     const max = dots.frames.length - 1;
     const curr = projectRowsCurrentFrame;
     projectRowsCurrentFrame = curr >= max ? 0 : curr + 1;
@@ -151,13 +154,25 @@ export async function createRunOneDynamicOutputRenderer({
     }
 
     if (totalSuccessfulTasks > 0) {
+      // if (remainingDependentTasksNotFromInitiatingProject === 0) {
       additionalFooterRows.push(
-        `   ${output.colors.green(
-          figures.tick
-        )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} dependent project tasks succeeded ${output.colors.gray(
-          `[${totalCachedTasks} read from cache]`
-        )}`
+        output.colors.cyan.dim(
+          `   ${output.colors.cyan(
+            figures.tick
+          )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} dependent project tasks succeeded ${output.colors.gray(
+            `[${totalCachedTasks} read from cache]`
+          )}`
+        )
       );
+      // } else {
+      //   additionalFooterRows.push(
+      //     `   ${output.colors.green(
+      //       figures.tick
+      //     )}    ${totalSuccessfulTasks}${`/${totalCompletedTasks}`} dependent project tasks succeeded ${output.colors.gray(
+      //       `[${totalCachedTasks} read from cache]`
+      //     )}`
+      //   );
+      // }
     }
 
     clearPinnedFooter();
@@ -311,7 +326,9 @@ export async function createRunOneDynamicOutputRenderer({
         state = 'EXECUTING_INITIATING_PROJECT_TARGET';
         clearRenderInterval();
         renderProjectRows(false);
-        output.addVerticalSeparator('cyan');
+        if (totalDependentTasksNotFromInitiatingProject > 0) {
+          output.addVerticalSeparator('cyan');
+        }
       }
     }
     if (
