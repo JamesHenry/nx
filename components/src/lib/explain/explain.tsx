@@ -79,7 +79,7 @@ export function Explain() {
               }
             });
           }),
-          100
+          1000
         );
 
         editor.onDidChangeCursorSelection((e) => {
@@ -252,23 +252,21 @@ function createExplanationWidget(
       if (!this.domNode) {
         this.domNode = document.createElement('div');
         this.domNode.innerHTML = `
-        <h1>HTML Ipsum Presents</h1>
+<div class="space-y-2 text-xs leading-8">
+  <h2 class="font-bold text-xl text-blue-800 font-mono">affected</h2>
 
-				<p><strong>Pellentesque habitant morbi tristique</strong> senectus et netus et malesuada fames ac turpis egestas. Vestibulum tortor quam, feugiat vitae, ultricies eget, tempor sit amet, ante. Donec eu libero sit amet quam egestas semper. <em>Aenean ultricies mi vitae est.</em> Mauris placerat eleifend leo. Quisque sit amet est et sapien ullamcorper pharetra. Vestibulum erat wisi, condimentum sed, <code>commodo vitae</code>, ornare sit amet, wisi. Aenean fermentum, elit eget tincidunt condimentum, eros ipsum rutrum orci, sagittis tempus lacus enim ac dui. <a href="#">Donec non enim</a> in turpis pulvinar facilisis. Ut felis.</p>
+  <p>Default options for <code class="bg-blue-100 text-blue-800 px-2 py-1 rounded">nx affected</code></p>
 
-				<h2>Header Level 2</h2>
-
-				<ol>
-				   <li>Lorem ipsum dolor sit amet, consectetuer adipiscing elit.</li>
-				   <li>Aliquam tincidunt mauris eu risus.</li>
-				</ol>
-
-				<blockquote><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus magna. Cras in mi at felis aliquet congue. Ut a est eget ligula molestie gravida. Curabitur massa. Donec eleifend, libero at sagittis mollis, tellus est malesuada tellus, at luctus turpis elit sit amet quam. Vivamus pretium ornare est.</p></blockquote>
-
-				<h3>Header Level 3</h3>
+  <!-- <h3 class="font-semibold text-lg">Your Config</h3> -->
+  <hr class="!my-4 border-blue-200" />
+  
+  <p>You have configured a <code class="bg-blue-100 text-blue-800 px-2 py-1 rounded">defaultBase</code> value of <code class="bg-blue-100 text-blue-800 px-2 py-1 rounded">master</code>, which means that whenever you run an affected command such as <code class="bg-blue-100 text-blue-800 px-2 py-1 rounded">nx affected:build</code>, it is the same as if you had run <code class="bg-blue-100 text-blue-800 px-2 py-1 rounded">nx affected:build --base=master</code></p>
+</div>
 `;
-        this.domNode.style.background = 'grey';
-        this.domNode.classList.add(...['bg-gray-200', `w-[${width}px]`]);
+        // this.domNode.style.background = 'grey';
+        this.domNode.classList.add(
+          ...['bg-blue-50', `w-[${width}px]`, 'px-6', 'py-6']
+        );
       }
       return this.domNode;
     },
