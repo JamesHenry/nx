@@ -2,6 +2,7 @@ import Editor, { Monaco, useMonaco } from '@monaco-editor/react';
 import { findNodeAtOffset, Node, parseTree } from 'jsonc-parser';
 import type { IPosition } from 'monaco-editor';
 import { useEffect, useRef } from 'react';
+import { debounce } from 'lodash';
 
 // These types aren't exported so have to grab it from the relevant function signatures
 type IContentWidget = Parameters<
@@ -70,13 +71,16 @@ export function Explain() {
           }
         }
 
-        editor.onDidScrollChange((e) => {
-          editor.changeViewZones((accessor) => {
-            if (activeViewZone.current) {
-              accessor.layoutZone(activeViewZone.current);
-            }
-          });
-        });
+        editor.onDidScrollChange(
+          debounce(() => {
+            editor.changeViewZones((changeAccessor) => {
+              if (activeViewZone.current) {
+                changeAccessor.layoutZone(activeViewZone.current);
+              }
+            });
+          }),
+          100
+        );
 
         editor.onDidChangeCursorSelection((e) => {
           const modelVal = editor.getValue();
@@ -198,14 +202,13 @@ export function Explain() {
                * If the answer is yes, then we simply return the height of the widget's own DOM node, if the answer is no, the we want to return 0, because
                * in this case the editor is already automatically hiding the widget itself. Therefore if didn't return 0 we would end up with a large blank
                * area until the scroll returned to a position in which the start of the widget is fully visible.
+               *
+               * (This is combined with the call to layoutZone() in the onDidScrollChange() handler to ensure it is appropriately recalled).
                */
               get heightInPx() {
                 const firstVisibleLineNumber =
                   editor.getVisibleRanges()[0].startLineNumber;
-                console.log({
-                  firstVisibleLineNumber,
-                  selectionEndPosLineNumber: selectionEndPos.lineNumber,
-                });
+
                 if (firstVisibleLineNumber > selectionEndPos.lineNumber) {
                   return 0;
                 }
