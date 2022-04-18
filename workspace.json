@@ -4,6 +4,7 @@
     "add-nx-to-monorepo": "packages/add-nx-to-monorepo",
     "angular": "packages/angular",
     "cli": "packages/cli",
+    "components": "components",
     "cra-to-nx": "packages/cra-to-nx",
     "create-nx-plugin": "packages/create-nx-plugin",
     "create-nx-workspace": "packages/create-nx-workspace",
