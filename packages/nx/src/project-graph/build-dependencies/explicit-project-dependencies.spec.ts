@@ -276,7 +276,7 @@ describe('explicit project dependencies', () => {
 
   /**
    * In version 8, Angular deprecated the loadChildren string syntax in favor of using dynamic imports, but it is still
-   * fully supported by the framework:
+   * fully supported by the framework, so we still support it in Nx for now.
    *
    * https://angular.io/guide/deprecations#loadchildren-string-syntax
    */
@@ -301,6 +301,14 @@ describe('explicit project dependencies', () => {
               }];
             `,
           },
+          {
+            path: 'libs/proj/no-substitution-template-literal.ts',
+            content: `
+              const a = {
+                loadChildren: \`@proj/my-second-proj\`
+              };
+            `,
+          },
         ],
       });
 
@@ -320,6 +328,11 @@ describe('explicit project dependencies', () => {
           sourceProjectName,
           sourceProjectFile: 'libs/proj/file-2.ts',
           targetProjectName: 'proj3a',
+        },
+        {
+          sourceProjectName,
+          sourceProjectFile: 'libs/proj/no-substitution-template-literal.ts',
+          targetProjectName: 'proj2',
         },
       ]);
     });
@@ -401,6 +414,15 @@ describe('explicit project dependencies', () => {
             content: `
               /* nx-ignore-next-line */
               const a = { loadChildren: '@proj/proj4ab#a' };
+            `,
+          },
+          {
+            path: 'libs/proj/no-substitution-template-literal.ts',
+            content: `
+              const a = {
+                /* nx-ignore-next-line */
+                loadChildren: \`@proj/my-second-proj\`
+              };
             `,
           },
         ],

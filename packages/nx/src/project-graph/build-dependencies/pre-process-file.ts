@@ -1061,8 +1061,10 @@ export function createPreProcessFile(ts: typeof _ts) {
           if (name === 'loadChildren') {
             const init = node.initializer;
             // Only the legacy string syntax needs special handling
-            // TODO: Check if this works today with template literals
-            if (!ts.isStringLiteral(init)) {
+            if (
+              !ts.isStringLiteral(init) &&
+              !ts.isNoSubstitutionTemplateLiteral(init)
+            ) {
               return;
             }
 

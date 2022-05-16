@@ -19,10 +19,10 @@ export function buildExplicitTypeScriptDependencies(
   }
   const preProcessFile = createPreProcessFile(tsModule);
   const targetProjectLocator = new TargetProjectLocator(
-    graph.nodes as any,
+    graph.nodes,
     graph.externalNodes
   );
-  const res = [] as any;
+  const explicitDependencies: ExplicitDependency[] = [];
 
   for (const [projectName, fileData] of Object.entries(filesToProcess)) {
     for (const { file } of Object.values(fileData)) {
@@ -37,24 +37,24 @@ export function buildExplicitTypeScriptDependencies(
       }
 
       const content = defaultFileRead(file);
-      const result = preProcessFile(content, true, true, file);
-      const { importedFiles } = result;
-      console.log({ file, importedFiles: JSON.stringify(importedFiles) });
+      const { importedFiles } = preProcessFile(content, true, true, file);
 
       for (const importedFile of importedFiles) {
         const target = targetProjectLocator.findProjectWithImport(
           importedFile.fileName,
           file
         );
-        if (target) {
-          res.push({
-            sourceProjectName: projectName,
-            targetProjectName: target,
-            sourceProjectFile: file,
-          });
+        if (!target) {
+          continue;
         }
+        explicitDependencies.push({
+          sourceProjectName: projectName,
+          targetProjectName: target,
+          sourceProjectFile: file,
+        });
       }
     }
   }
-  return res;
+
+  return explicitDependencies;
 }
