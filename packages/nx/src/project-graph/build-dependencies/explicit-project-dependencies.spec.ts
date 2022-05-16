@@ -173,6 +173,22 @@ describe('explicit project dependencies', () => {
               }
             `,
           },
+          {
+            path: 'libs/proj/comments-with-excess-whitespace.ts',
+            content: `
+              /* 
+                nx-ignore-next-line
+                
+                */
+              require('@proj/proj4ab');
+              //     nx-ignore-next-line
+              import('@proj/proj4ab');
+              /* 
+                
+              nx-ignore-next-line */
+              import { foo } from '@proj/proj4ab';
+            `,
+          },
         ],
       });
 
@@ -198,46 +214,42 @@ describe('explicit project dependencies', () => {
               \`require('@proj/my-second-proj');\`
             `,
           },
+          // https://github.com/nrwl/nx/issues/8938
+          {
+            path: 'libs/proj/file-1.ts',
+            content: `
+              const npmScope = 'myorg';
+              console.log(\`@\${npmScope}\`);
+
+              console.log(\`import {foo} from '@proj/my-second-proj'\`)
+            `,
+          },
+          {
+            path: 'libs/proj/file-2.ts',
+            content: `
+              const v = \`\${val}
+              \${val}
+                  \${val} \${val}
+
+                    \${val} \${val}
+
+                    \`;
+              tree.write('/path/to/file.ts', \`import something from "@proj/project-3";\`);
+            `,
+          },
+          {
+            path: 'libs/proj/file-3.ts',
+            content: `
+              \`\${Tree}\`;
+              \`\`;
+              \`import { A } from '@proj/my-second-proj'\`;
+              \`import { B, C, D } from '@proj/project-3'\`;
+              \`require('@proj/proj4ab')\`;
+            `,
+          },
           /**
-           * TODO: Refactor usage of Scanner to fix these.
-           *
-           * The use of a template literal before a templatized import/require
-           * currently causes Nx to interpret the import/require as if they were not templatized and were declarared directly
-           * in the source code.
+           * TODO: How do we actually want to handle this? Should it throw when the Scanner errors?
            */
-          // Also reported here: https://github.com/nrwl/nx/issues/8938
-          // {
-          //   path: 'libs/proj/file-1.ts',
-          //   content: `
-          //     const npmScope = 'myorg';
-          //     console.log(\`@\${npmScope}\`);
-
-          //     console.log(\`import {foo} from '@proj/my-second-proj'\`)
-          //   `,
-          // },
-          // {
-          //   path: 'libs/proj/file-2.ts',
-          //   content: `
-          //     const v = \`\${val}
-          //     \${val}
-          //         \${val} \${val}
-
-          //           \${val} \${val}
-
-          //           \`;
-          //     tree.write('/path/to/file.ts', \`import something from "@proj/project-3";\`);
-          //   `,
-          // },
-          // {
-          //   path: 'libs/proj/file-3.ts',
-          //   content: `
-          //     \`\${Tree}\`;
-          //     \`\`;
-          //     \`import { A } from '@proj/my-second-proj'\`;
-          //     \`import { B, C, D } from '@proj/project-3'\`;
-          //     \`require('@proj/proj4ab')\`;
-          //   `,
-          // },
           // {
           //   path: 'libs/proj/file-4.ts',
           //   // Ensure unterminated template literal does not break project graph creation
@@ -326,35 +338,71 @@ describe('explicit project dependencies', () => {
               };
             `,
           },
-          /**
-           * TODO: This case, where a multi-line comment is used, is not working
-           */
-          // {
-          //   path: 'libs/proj/file-2.ts',
-          //   content: `
-          //     const a = {
-          //       /* nx-ignore-next-line */
-          //       loadChildren: '@proj/proj4ab#a'
-          //     };
-          //   `,
-          // },
-          /**
-           * TODO: These cases, where loadChildren is on the same line as the variable declaration, are not working
-           */
-          // {
-          //   path: 'libs/proj/file-3.ts',
-          //   content: `
-          //     // nx-ignore-next-line
-          //     const a = { loadChildren: '@proj/proj4ab#a' };
-          //   `,
-          // },
-          // {
-          //   path: 'libs/proj/file-4.ts',
-          //   content: `
-          //     /* nx-ignore-next-line */
-          //     const a = { loadChildren: '@proj/proj4ab#a' };
-          //   `,
-          // },
+          {
+            path: 'libs/proj/file-2.ts',
+            content: `
+              const a = {
+                // nx-ignore-next-line
+                loadChildren:
+                  '@proj/proj4ab#a'
+              };
+            `,
+          },
+          {
+            path: 'libs/proj/file-3.ts',
+            content: `
+              const a = {
+                loadChildren:
+                  // nx-ignore-next-line
+                  '@proj/proj4ab#a'
+              };
+            `,
+          },
+          {
+            path: 'libs/proj/file-2.ts',
+            content: `
+              const a = {
+                /* nx-ignore-next-line */
+                loadChildren: '@proj/proj4ab#a'
+              };
+            `,
+          },
+          {
+            path: 'libs/proj/comments-with-excess-whitespace.ts',
+            content: `
+              const a = {
+                /* 
+                    nx-ignore-next-line
+                
+                */
+                loadChildren: '@proj/proj4ab#a'
+              };
+              const b = {
+                //     nx-ignore-next-line
+                loadChildren: '@proj/proj4ab#a'
+              };
+              const c = {
+                /* 
+                
+              nx-ignore-next-line */
+                loadChildren: '@proj/proj4ab#a'
+              };
+            `,
+          },
+          {
+            path: 'libs/proj/file-3.ts',
+            content: `
+              // nx-ignore-next-line
+              const a = { loadChildren: '@proj/proj4ab#a' };
+            `,
+          },
+          {
+            path: 'libs/proj/file-4.ts',
+            content: `
+              /* nx-ignore-next-line */
+              const a = { loadChildren: '@proj/proj4ab#a' };
+            `,
+          },
         ],
       });
 
