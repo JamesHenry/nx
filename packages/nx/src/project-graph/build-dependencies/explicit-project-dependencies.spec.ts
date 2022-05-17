@@ -98,14 +98,11 @@ describe('explicit project dependencies', () => {
           sourceProjectFile: 'libs/proj/index.ts',
           targetProjectName: 'proj2',
         },
-        /**
-         * TODO: Fix regression
-         */
-        // {
-        //   sourceProjectName,
-        //   sourceProjectFile: 'libs/proj/index.ts',
-        //   targetProjectName: 'proj3a',
-        // },
+        {
+          sourceProjectName,
+          sourceProjectFile: 'libs/proj/index.ts',
+          targetProjectName: 'proj3a',
+        },
         {
           sourceProjectName,
           sourceProjectFile: 'libs/proj/index.ts',

@@ -846,6 +846,19 @@ export function createPreProcessFile(ts: typeof _ts) {
               // export * from "mod"
               recordModuleName();
             }
+          // JH: added support form export * as NS from "mod"
+          } else if (token === SyntaxKind.AsKeyword) {
+            token = nextToken();
+            if (token === SyntaxKind.Identifier || isKeyword(token)) {
+              token = nextToken();
+              if (token === SyntaxKind.FromKeyword) {
+                token = nextToken();
+                if (token === SyntaxKind.StringLiteral) {
+                  // export * as NS from "mod"
+                  recordModuleName();
+                }
+              }
+            }
           }
         } else if (token === SyntaxKind.ImportKeyword) {
           token = nextToken();

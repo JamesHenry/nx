@@ -484,7 +484,7 @@ describe('unittests:: services:: PreProcessFile:', () => {
       /* eslint-enable no-template-curly-in-string */
     });
 
-    it('Correctly return ES6 exports', () => {
+    it('Correctly return exports', () => {
       test(
         'export * from "m1";' +
           '\n' +
@@ -493,6 +493,8 @@ describe('unittests:: services:: PreProcessFile:', () => {
           'export {a as A} from "m3";' +
           '\n' +
           'export {a as A, b, c as C} from "m4";' +
+          '\n' +
+          'export * as aliased from "m5";' +
           '\n',
         /*readImportFile*/ true,
         /*detectJavaScriptImports*/ false,
@@ -505,6 +507,8 @@ describe('unittests:: services:: PreProcessFile:', () => {
             { fileName: 'm2', pos: 36, end: 38 },
             { fileName: 'm3', pos: 63, end: 65 },
             { fileName: 'm4', pos: 101, end: 103 },
+            // JH: added support for export * as NS
+            { fileName: 'm5', pos: 132, end: 134 },
           ],
           ambientExternalModules: undefined,
           isLibFile: false,
