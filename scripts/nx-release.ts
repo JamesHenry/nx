@@ -11,7 +11,6 @@ const version = require('lerna/commands/version');
 const publish = require('lerna/commands/publish');
 
 const lernaJsonPath = join(__dirname, '../lerna.json');
-const originalLernaJson = readFileSync(lernaJsonPath);
 
 function hideFromGitIndex(uncommittedFiles: string[]) {
   execSync(`git update-index --assume-unchanged ${uncommittedFiles.join(' ')}`);
@@ -23,6 +22,9 @@ function hideFromGitIndex(uncommittedFiles: string[]) {
 }
 
 (async () => {
+  // Run without daemon to prevent conflicts with main root workspace and build/packages
+  process.env.NX_DAEMON = 'false';
+
   const options = parseArgs();
 
   if (options.clearLocalRegistry) {
@@ -53,25 +55,32 @@ function hideFromGitIndex(uncommittedFiles: string[]) {
   });
 
   if (options.local) {
-    updateLernaJsonVersion(currentLatestVersion);
-  }
+    const lernaJsonInBuild = JSON.parse(readFileSync(lernaJsonPath).toString());
+    lernaJsonInBuild.version = version;
 
-  if (options.local) {
-    // Force all projects to be not private
-    const projects = JSON.parse(
-      execSync('npx lerna list --json --all').toString()
+    lernaJsonInBuild.packages = lernaJsonInBuild.packages.map((p: string) =>
+      p.replace('build/packages', '**')
     );
-    for (const proj of projects) {
-      if (proj.private) {
-        console.log('Publishing private package locally:', proj.name);
-        const packageJsonPath = join(proj.location, 'package.json');
-        const original = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-        writeFileSync(
-          packageJsonPath,
-          JSON.stringify({ ...original, private: false })
-        );
-      }
-    }
+
+    writeFileSync(
+      './build/packages/lerna.json',
+      JSON.stringify(lernaJsonInBuild, null, 2)
+    );
+    // Needed because lerna will throw if no root package.json is found
+    writeFileSync(
+      './build/packages/package.json',
+      `{
+  "private": true,
+  "description": "This package.json exists to facilitate publishing built packages via scripts/nx-release.ts"
+}`
+    );
+    // Needed in order to discover all the packages for the graph
+    writeFileSync(
+      './build/packages/nx.json',
+      `{
+  "plugins": ["nx/plugins/package-json"]
+}`
+    );
   }
 
   if (!options.local && process.env.NPM_TOKEN) {
@@ -130,6 +139,8 @@ function hideFromGitIndex(uncommittedFiles: string[]) {
   const publishOptions: Record<string, boolean | string | undefined> = {
     gitReset: false,
     distTag: distTag,
+    // When publishing locally, publish all the packages including those marked "private": true
+    includePrivate: options.local ? '*' : undefined,
   };
 
   if (!options.local && !process.env.NPM_TOKEN) {
@@ -144,10 +155,6 @@ function hideFromGitIndex(uncommittedFiles: string[]) {
   } else {
     await version(versionOptions);
     console.warn('Not Publishing because --dryRun was passed');
-  }
-
-  if (options.local) {
-    restoreOriginalLernaJson();
   }
 })();
 
@@ -247,18 +254,6 @@ function parseArgs() {
   parsedArgs.tag ??= parsedArgs.local ? 'latest' : 'next';
 
   return parsedArgs;
-}
-
-function updateLernaJsonVersion(version: string) {
-  const json = JSON.parse(readFileSync(lernaJsonPath).toString());
-
-  json.version = version;
-
-  writeFileSync(lernaJsonPath, JSON.stringify(json));
-}
-
-function restoreOriginalLernaJson() {
-  writeFileSync(lernaJsonPath, originalLernaJson);
 }
 
 function getRegistry() {
