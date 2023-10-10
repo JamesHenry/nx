@@ -42,7 +42,7 @@ export async function publishHandler(
 
   /**
    * User is filtering to a subset of projects. We need to make sure that what they have provided can be reconciled
-   * against their configuration in terms of release groups and the ungroupedProjectsHandling option.
+   * against their configuration in terms of release groups.
    */
   if (args.projects?.length) {
     const matchingProjectsForFilter = findMatchingProjects(

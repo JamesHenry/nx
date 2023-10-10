@@ -80,6 +80,10 @@ interface NxReleaseConfiguration {
     {
       projects: string[] | string;
       /**
+       * Whether or not the matching projects in the group should be released independently of each other.
+       */
+      independent?: boolean;
+      /**
        * If no version config is provided for the group, we will assume that @nx/js:release-version
        * is the desired generator implementation, allowing for terser config for the common case.
        */

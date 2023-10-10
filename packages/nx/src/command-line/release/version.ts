@@ -74,7 +74,7 @@ export async function versionHandler(args: VersionOptions): Promise<void> {
 
   /**
    * User is filtering to a subset of projects. We need to make sure that what they have provided can be reconciled
-   * against their configuration in terms of release groups and the ungroupedProjectsHandling option.
+   * against their configuration in terms of release groups.
    */
   if (args.projects?.length) {
     const matchingProjectsForFilter = findMatchingProjects(
@@ -157,25 +157,51 @@ export async function versionHandler(args: VersionOptions): Promise<void> {
         configGeneratorOptions: releaseGroup.version.generatorOptions,
       });
 
-      const semverSpecifier = await resolveSemverSpecifier(
-        args.specifier,
-        `What kind of change is this for the ${
-          releaseGroupToFilteredProjects.get(releaseGroup).size
-        } matched project(s) within release group "${releaseGroupName}"?`,
-        `What is the exact version for the ${
-          releaseGroupToFilteredProjects.get(releaseGroup).size
-        } matched project(s) within release group "${releaseGroupName}"?`
-      );
+      /**
+       * If the projects are being versioned independently then we need to potentially prompt the user and invoke
+       * runVersionOnProjects for each one individually.
+       */
+      if (releaseGroup.independent) {
+        for (const independentProject of Array.from(
+          releaseGroupToFilteredProjects.get(releaseGroup)
+        )) {
+          const semverSpecifier = await resolveSemverSpecifier(
+            args.specifier,
+            `What kind of change is this for project "${independentProject}" within release group "${releaseGroupName}"?`,
+            `What is the exact version for project "${independentProject}" within release group "${releaseGroupName}"?`
+          );
 
-      await runVersionOnProjects(
-        projectGraph,
-        nxJson,
-        args,
-        tree,
-        generatorData,
-        Array.from(releaseGroupToFilteredProjects.get(releaseGroup)),
-        semverSpecifier
-      );
+          await runVersionOnProjects(
+            projectGraph,
+            nxJson,
+            args,
+            tree,
+            generatorData,
+            [independentProject],
+            semverSpecifier
+          );
+        }
+      } else {
+        const semverSpecifier = await resolveSemverSpecifier(
+          args.specifier,
+          `What kind of change is this for the ${
+            releaseGroupToFilteredProjects.get(releaseGroup).size
+          } matched project(s) within release group "${releaseGroupName}"?`,
+          `What is the exact version for the ${
+            releaseGroupToFilteredProjects.get(releaseGroup).size
+          } matched project(s) within release group "${releaseGroupName}"?`
+        );
+
+        await runVersionOnProjects(
+          projectGraph,
+          nxJson,
+          args,
+          tree,
+          generatorData,
+          Array.from(releaseGroupToFilteredProjects.get(releaseGroup)),
+          semverSpecifier
+        );
+      }
     }
 
     printChanges(tree, !!args.dryRun);
@@ -213,25 +239,49 @@ export async function versionHandler(args: VersionOptions): Promise<void> {
       configGeneratorOptions: releaseGroup.version.generatorOptions,
     });
 
-    const semverSpecifier = await resolveSemverSpecifier(
-      args.specifier,
-      releaseGroupName === CATCH_ALL_RELEASE_GROUP
-        ? `What kind of change is this for all packages?`
-        : `What kind of change is this for release group "${releaseGroupName}"?`,
-      releaseGroupName === CATCH_ALL_RELEASE_GROUP
-        ? `What is the exact version for all packages?`
-        : `What is the exact version for release group "${releaseGroupName}"?`
-    );
+    /**
+     * If the projects are being versioned independently then we need to potentially prompt the user and invoke
+     * runVersionOnProjects for each one individually.
+     */
+    if (releaseGroup.independent) {
+      for (const independentProject of releaseGroup.projects) {
+        const semverSpecifier = await resolveSemverSpecifier(
+          args.specifier,
+          `What kind of change is this for project "${independentProject}" within release group "${releaseGroupName}"?`,
+          `What is the exact version for project "${independentProject}" within release group "${releaseGroupName}"?`
+        );
 
-    await runVersionOnProjects(
-      projectGraph,
-      nxJson,
-      args,
-      tree,
-      generatorData,
-      releaseGroup.projects,
-      semverSpecifier
-    );
+        await runVersionOnProjects(
+          projectGraph,
+          nxJson,
+          args,
+          tree,
+          generatorData,
+          [independentProject],
+          semverSpecifier
+        );
+      }
+    } else {
+      const semverSpecifier = await resolveSemverSpecifier(
+        args.specifier,
+        releaseGroupName === CATCH_ALL_RELEASE_GROUP
+          ? `What kind of change is this for all projects?`
+          : `What kind of change is this for release group "${releaseGroupName}"?`,
+        releaseGroupName === CATCH_ALL_RELEASE_GROUP
+          ? `What is the exact version for all projects?`
+          : `What is the exact version for release group "${releaseGroupName}"?`
+      );
+
+      await runVersionOnProjects(
+        projectGraph,
+        nxJson,
+        args,
+        tree,
+        generatorData,
+        releaseGroup.projects,
+        semverSpecifier
+      );
+    }
   }
 
   printChanges(tree, !!args.dryRun);

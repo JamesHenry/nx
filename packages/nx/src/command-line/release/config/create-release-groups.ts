@@ -7,6 +7,7 @@ import { resolveNxJsonConfigErrorMessage } from '../utils/resolve-nx-json-error-
 export interface ReleaseGroup {
   name: string;
   projects: string[];
+  independent: boolean;
   version: {
     generator: string;
     generatorOptions: Record<string, unknown>;
@@ -67,6 +68,7 @@ export async function createReleaseGroups(
         {
           name: CATCH_ALL_RELEASE_GROUP,
           projects: allProjects,
+          independent: false,
           version: {
             generator: DEFAULT_VERSION_GENERATOR,
             generatorOptions: DEFAULT_VERSION_GENERATOR_OPTIONS,
@@ -139,6 +141,7 @@ export async function createReleaseGroups(
     releaseGroups.push({
       name: releaseGroupName,
       projects: matchingProjects,
+      independent: userSpecifiedGroup.independent || false,
       version: userSpecifiedGroup.version
         ? {
             generator:
