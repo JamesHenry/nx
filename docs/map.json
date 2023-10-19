@@ -67,6 +67,11 @@
                   "name": "Node Standalone",
                   "id": "node-server-tutorial",
                   "file": "shared/node-server-tutorial/1-code-generation"
+                },
+                {
+                  "name": "Versioning and Publishing Packages",
+                  "id": "release-tutorial",
+                  "file": "shared/release-tutorial/release-tutorial"
                 }
               ]
             }

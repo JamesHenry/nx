@@ -110,6 +110,16 @@
             "isExternal": false,
             "path": "/getting-started/tutorials/node-server-tutorial",
             "tags": []
+          },
+          {
+            "id": "release-tutorial",
+            "name": "Versioning and Publishing Packages",
+            "description": "",
+            "file": "shared/release-tutorial/release-tutorial",
+            "itemList": [],
+            "isExternal": false,
+            "path": "/getting-started/tutorials/release-tutorial",
+            "tags": []
           }
         ],
         "isExternal": false,
@@ -226,6 +236,16 @@
         "isExternal": false,
         "path": "/getting-started/tutorials/node-server-tutorial",
         "tags": []
+      },
+      {
+        "id": "release-tutorial",
+        "name": "Versioning and Publishing Packages",
+        "description": "",
+        "file": "shared/release-tutorial/release-tutorial",
+        "itemList": [],
+        "isExternal": false,
+        "path": "/getting-started/tutorials/release-tutorial",
+        "tags": []
       }
     ],
     "isExternal": false,
@@ -300,6 +320,16 @@
     "itemList": [],
     "isExternal": false,
     "path": "/getting-started/tutorials/node-server-tutorial",
+    "tags": []
+  },
+  "/getting-started/tutorials/release-tutorial": {
+    "id": "release-tutorial",
+    "name": "Versioning and Publishing Packages",
+    "description": "",
+    "file": "shared/release-tutorial/release-tutorial",
+    "itemList": [],
+    "isExternal": false,
+    "path": "/getting-started/tutorials/release-tutorial",
     "tags": []
   },
   "/core-tutorial": {
