@@ -2788,6 +2788,27 @@
     "source": "/packages/tao/src"
   },
   {
+    "description": "The Nx Plugin for tsc",
+    "documents": [],
+    "executors": [],
+    "generators": [
+      {
+        "description": "Synchronize project references and compiler option paths based on the project graph",
+        "file": "generated/packages/tsc/generators/sync.json",
+        "hidden": false,
+        "name": "sync",
+        "originalFilePath": "/packages/tsc/src/generators/sync/schema.json",
+        "path": "tsc/generators/sync",
+        "type": "generator"
+      }
+    ],
+    "githubRoot": "https://github.com/nrwl/nx/blob/master",
+    "name": "tsc",
+    "packageName": "@nx/tsc",
+    "root": "/packages/tsc",
+    "source": "/packages/tsc/src"
+  },
+  {
     "description": "The Nx Plugin for building and testing applications using Vite",
     "documents": [
       {

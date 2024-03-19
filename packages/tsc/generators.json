@@ -1,0 +1,11 @@
+{
+  "name": "Nx tsc",
+  "version": "0.1",
+  "generators": {
+    "sync": {
+      "factory": "./src/generators/sync/sync#syncGenerator",
+      "schema": "./src/generators/sync/schema.json",
+      "description": "Synchronize project references and compiler option paths based on the project graph"
+    }
+  }
+}

@@ -9897,6 +9897,32 @@
         "disableCollapsible": false
       },
       {
+        "id": "tsc",
+        "path": "/nx-api/tsc",
+        "name": "tsc",
+        "children": [
+          {
+            "id": "generators",
+            "path": "/nx-api/tsc/generators",
+            "name": "generators",
+            "children": [
+              {
+                "id": "sync",
+                "path": "/nx-api/tsc/generators/sync",
+                "name": "sync",
+                "children": [],
+                "isExternal": false,
+                "disableCollapsible": false
+              }
+            ],
+            "isExternal": false,
+            "disableCollapsible": false
+          }
+        ],
+        "isExternal": false,
+        "disableCollapsible": false
+      },
+      {
         "id": "vite",
         "path": "/nx-api/vite",
         "name": "vite",

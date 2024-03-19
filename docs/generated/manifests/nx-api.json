@@ -2813,6 +2813,28 @@
     "generators": {},
     "path": "/nx-api/tao"
   },
+  "tsc": {
+    "githubRoot": "https://github.com/nrwl/nx/blob/master",
+    "name": "tsc",
+    "packageName": "@nx/tsc",
+    "description": "The Nx Plugin for tsc",
+    "documents": {},
+    "root": "/packages/tsc",
+    "source": "/packages/tsc/src",
+    "executors": {},
+    "generators": {
+      "/nx-api/tsc/generators/sync": {
+        "description": "Synchronize project references and compiler option paths based on the project graph",
+        "file": "generated/packages/tsc/generators/sync.json",
+        "hidden": false,
+        "name": "sync",
+        "originalFilePath": "/packages/tsc/src/generators/sync/schema.json",
+        "path": "/nx-api/tsc/generators/sync",
+        "type": "generator"
+      }
+    },
+    "path": "/nx-api/tsc"
+  },
   "vite": {
     "githubRoot": "https://github.com/nrwl/nx/blob/master",
     "name": "vite",

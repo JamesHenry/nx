@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/schema",
+  "$id": "action",
+  "type": "object",
+  "description": "Synchronize project references and compiler option paths based on the project graph",
+  "properties": {},
+  "required": []
+}

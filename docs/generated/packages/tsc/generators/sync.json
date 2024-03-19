@@ -1,0 +1,19 @@
+{
+  "name": "sync",
+  "factory": "./src/generators/sync/sync#syncGenerator",
+  "schema": {
+    "$schema": "https://json-schema.org/schema",
+    "$id": "action",
+    "type": "object",
+    "description": "Synchronize project references and compiler option paths based on the project graph",
+    "properties": {},
+    "required": [],
+    "presets": []
+  },
+  "description": "Synchronize project references and compiler option paths based on the project graph",
+  "implementation": "/packages/tsc/src/generators/sync/sync#syncGenerator.ts",
+  "aliases": [],
+  "hidden": false,
+  "path": "/packages/tsc/src/generators/sync/schema.json",
+  "type": "generator"
+}
