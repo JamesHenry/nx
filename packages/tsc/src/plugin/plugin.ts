@@ -14,7 +14,17 @@ import { projectGraphCacheDirectory } from 'nx/src/utils/cache-directory';
 import { dirname, join } from 'path';
 
 export interface TscPluginOptions {
-  targetName?: string;
+  typecheck?:
+    | boolean
+    | {
+        targetName?: string;
+      };
+  build?:
+    | boolean
+    | {
+        targetName?: string;
+        configName?: string;
+      };
 }
 
 const cachePath = join(projectGraphCacheDirectory, 'tsc.hash');
@@ -46,10 +56,10 @@ export const createDependencies: CreateDependencies = () => {
 export const createNodes: CreateNodes<TscPluginOptions> = [
   '**/tsconfig*.json',
   (configFilePath, options, context) => {
-    options = normalizeOptions(options);
+    const pluginOptions = normalizePluginOptions(options);
     const projectRoot = dirname(configFilePath);
 
-    // Do not create a project for the root package.json
+    // Do not create a project for the root tsconfig.json files
     if (projectRoot === '.') {
       return {};
     }
@@ -63,13 +73,16 @@ export const createNodes: CreateNodes<TscPluginOptions> = [
       return {};
     }
 
-    const hash = calculateHashForCreateNodes(projectRoot, options, context, [
-      getLockFileName(detectPackageManager(context.workspaceRoot)),
-    ]);
+    const hash = calculateHashForCreateNodes(
+      projectRoot,
+      pluginOptions,
+      context,
+      [getLockFileName(detectPackageManager(context.workspaceRoot))]
+    );
 
     const targets = targetsCache[hash]
       ? targetsCache[hash]
-      : buildTscTargets(configFilePath, projectRoot, options, context);
+      : buildTscTargets(configFilePath, projectRoot, pluginOptions, context);
 
     calculatedTargets[hash] = targets;
 
@@ -87,31 +100,40 @@ export const createNodes: CreateNodes<TscPluginOptions> = [
 function buildTscTargets(
   configFilePath: string,
   projectRoot: string,
-  options: TscPluginOptions,
+  options: NormalizedPluginOptions,
   context: CreateNodesContext
 ) {
-  console.log({ configFilePath, projectRoot, options, context });
-
   const targets: Record<string, TargetConfiguration> = {};
 
-  const targetName = options.targetName;
-  if (!targets[targetName]) {
-    targets[targetName] = {
-      command: `tsc --build --pretty --verbose`,
-      options: { cwd: projectRoot },
-      cache: true,
-      //   inputs: getInputs(namedInputs),
-      //   outputs: getOutputs(projectRoot, cypressConfig, 'e2e'),
-    };
+  // Typecheck target
+  if (options.typecheck) {
+    const targetName = options.typecheck.targetName;
+    if (!targets[targetName]) {
+      targets[targetName] = {
+        command: `tsc --build --pretty --verbose`,
+        options: { cwd: projectRoot },
+        cache: true,
+        //   inputs: getInputs(namedInputs),
+        //   outputs: getOutputs(projectRoot, cypressConfig, 'e2e'),
+      };
+    }
+  }
+
+  // Build target
+  if (options.build) {
+    const targetName = options.build.targetName;
+    if (!targets[targetName]) {
+      targets[targetName] = {
+        command: `tsc -p ${options.build.configName}`,
+        options: { cwd: projectRoot },
+        cache: true,
+        //   inputs: getInputs(namedInputs),
+        //   outputs: getOutputs(projectRoot, cypressConfig, 'e2e'),
+      };
+    }
   }
 
   return targets;
-}
-
-function normalizeOptions(options: TscPluginOptions): TscPluginOptions {
-  options ??= {};
-  options.targetName ??= 'build';
-  return options;
 }
 
 /**
@@ -136,3 +158,58 @@ function normalizeOptions(options: TscPluginOptions): TscPluginOptions {
 //   // Then require
 //   return require(path);
 // }
+
+export interface NormalizedPluginOptions {
+  typecheck:
+    | false
+    | {
+        targetName: string;
+      };
+  build:
+    | false
+    | {
+        targetName: string;
+        configName: string;
+      };
+}
+
+export function normalizePluginOptions(
+  pluginOptions: TscPluginOptions
+): NormalizedPluginOptions {
+  const defaultTypecheckTargetName = 'typecheck';
+  let typecheck: NormalizedPluginOptions['typecheck'] = {
+    targetName: defaultTypecheckTargetName,
+  };
+  if (pluginOptions.typecheck === false) {
+    typecheck = false;
+  } else if (
+    pluginOptions.typecheck &&
+    typeof pluginOptions.typecheck !== 'boolean'
+  ) {
+    typecheck = {
+      targetName:
+        pluginOptions.typecheck.targetName ?? defaultTypecheckTargetName,
+    };
+  }
+
+  const defaultBuildTargetName = 'build';
+  const defaultBuildConfigName = 'tsconfig.lib.json';
+  let build: NormalizedPluginOptions['build'] = {
+    targetName: defaultBuildTargetName,
+    configName: defaultBuildConfigName,
+  };
+  // Build target is not enabled by default
+  if (!pluginOptions.build) {
+    build = false;
+  } else if (pluginOptions.build && typeof pluginOptions.build !== 'boolean') {
+    build = {
+      targetName: pluginOptions.build.targetName ?? defaultTypecheckTargetName,
+      configName: pluginOptions.build.configName ?? defaultBuildConfigName,
+    };
+  }
+
+  return {
+    typecheck,
+    build,
+  };
+}

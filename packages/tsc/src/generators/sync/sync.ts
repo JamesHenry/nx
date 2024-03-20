@@ -4,10 +4,12 @@ import {
   formatFiles,
   joinPathFragments,
   readJson,
+  readNxJson,
   writeJson,
 } from '@nx/devkit';
 import { relative } from 'node:path';
 import { SyncSchema } from './schema';
+import { TscPluginOptions, normalizePluginOptions } from '../../plugin/plugin';
 
 interface Tsconfig {
   references?: Array<{ path: string }>;
@@ -19,10 +21,34 @@ interface Tsconfig {
 }
 
 export async function syncGenerator(tree: Tree, options: SyncSchema) {
+  // Ensure that the @nx/tsc plugin has been wired up in nx.json
+  const nxJson = readNxJson(tree);
+  let tscPluginConfig: { plugin: string; options?: TscPluginOptions } | string =
+    nxJson.plugins.find((p) => {
+      if (typeof p === 'string') {
+        return p === '@nx/tsc';
+      }
+      return p.plugin === '@nx/tsc';
+    });
+  if (!tscPluginConfig) {
+    throw new Error(
+      'The @nx/tsc plugin must be added to the "plugins" array in nx.json before syncing tsconfigs'
+    );
+  }
+
+  if (typeof tscPluginConfig === 'string') {
+    tscPluginConfig = {
+      plugin: '@nx/tsc',
+      options: {},
+    };
+  }
+  const pluginOptions = normalizePluginOptions(tscPluginConfig.options || {});
   const projectGraph = await createProjectGraphAsync();
   const firstPartyDeps = Object.entries(projectGraph.dependencies).filter(
     ([name, data]) => !name.startsWith('npm:') && data.length > 0
   );
+
+  console.log({ pluginOptions });
 
   // Root tsconfig containing project references for the whole workspace
   const rootTsconfigPath = 'tsconfig.json';
@@ -61,15 +87,7 @@ export async function syncGenerator(tree: Tree, options: SyncSchema) {
       sourceProjectNode.data.root,
       'tsconfig.json'
     );
-    const sourceProjectTsconfigLibPath = joinPathFragments(
-      sourceProjectNode.data.root,
-      'tsconfig.lib.json'
-    );
     const sourceTsconfig = readJson<Tsconfig>(tree, sourceProjectTsconfigPath);
-    const sourceTsconfigLib = readJson<Tsconfig>(
-      tree,
-      sourceProjectTsconfigLibPath
-    );
 
     for (const dep of data) {
       // Set defaults in the case where we have at least one dependency so that we don't patch files when not necessary
@@ -131,39 +149,61 @@ export async function syncGenerator(tree: Tree, options: SyncSchema) {
         `${relativePathToTargetSourceRoot}/*`,
       ];
 
-      // Add/update path mappings to the dist files of the target within the source lib tsconfig
-      const targetOutDir = targetTsconfigLib.compilerOptions?.outDir;
-      // TODO: make this more flexible somehow?
-      if (!targetOutDir) {
-        throw new Error(
-          `The target project ${dep.target} does not have an outDir set in ${targetTsconfigLibPath}`
+      // Add/update path mappings to the dist files of the target within the source build tsconfig (only applicable if a build target is configured via the plugin)
+      if (pluginOptions.build) {
+        const sourceProjectBuildTsconfigPath = joinPathFragments(
+          sourceProjectNode.data.root,
+          pluginOptions.build.configName
+        );
+
+        // There is nothing to be done if the project does not have the configured build tsconfig
+        if (!tree.exists(sourceProjectBuildTsconfigPath)) {
+          continue;
+        }
+
+        const sourceProjectBuildTsconfig = readJson<Tsconfig>(
+          tree,
+          sourceProjectBuildTsconfigPath
+        );
+
+        const targetOutDir = targetTsconfigLib.compilerOptions?.outDir;
+        // TODO: make this more flexible somehow?
+        if (!targetOutDir) {
+          throw new Error(
+            `The target project ${dep.target} does not have an outDir set in ${targetTsconfigLibPath}`
+          );
+        }
+        const absolutePathToTargetOutDir = joinPathFragments(
+          tree.root,
+          targetTsconfigLibPath,
+          targetOutDir
+        );
+        const absolutePathToSourceTsconfigLib = joinPathFragments(
+          tree.root,
+          sourceProjectBuildTsconfigPath
+        );
+        const relativePathToTargetOutDir = relative(
+          absolutePathToSourceTsconfigLib,
+          absolutePathToTargetOutDir
+        );
+        sourceProjectBuildTsconfig.compilerOptions =
+          sourceProjectBuildTsconfig.compilerOptions || {};
+        sourceProjectBuildTsconfig.compilerOptions.paths =
+          sourceProjectBuildTsconfig.compilerOptions.paths || {};
+        sourceProjectBuildTsconfig.compilerOptions.paths[`${dep.target}`] = [
+          relativePathToTargetOutDir,
+        ];
+        writeJson(
+          tree,
+          sourceProjectBuildTsconfigPath,
+          sourceProjectBuildTsconfig
         );
       }
-      const absolutePathToTargetOutDir = joinPathFragments(
-        tree.root,
-        targetTsconfigLibPath,
-        targetOutDir
-      );
-      const absolutePathToSourceTsconfigLib = joinPathFragments(
-        tree.root,
-        sourceProjectTsconfigLibPath
-      );
-      const relativePathToTargetOutDir = relative(
-        absolutePathToSourceTsconfigLib,
-        absolutePathToTargetOutDir
-      );
-      sourceTsconfigLib.compilerOptions =
-        sourceTsconfigLib.compilerOptions || {};
-      sourceTsconfigLib.compilerOptions.paths =
-        sourceTsconfigLib.compilerOptions.paths || {};
-      sourceTsconfigLib.compilerOptions.paths[`${dep.target}`] = [
-        relativePathToTargetOutDir,
-      ];
     }
 
     // Update the source tsconfig files
     writeJson(tree, sourceProjectTsconfigPath, sourceTsconfig);
-    writeJson(tree, sourceProjectTsconfigLibPath, sourceTsconfigLib);
   }
+
   await formatFiles(tree);
 }
