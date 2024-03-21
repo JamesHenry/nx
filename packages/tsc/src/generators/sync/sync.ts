@@ -48,8 +48,6 @@ export async function syncGenerator(tree: Tree, options: SyncSchema) {
     ([name, data]) => !name.startsWith('npm:') && data.length > 0
   );
 
-  console.log({ pluginOptions });
-
   // Root tsconfig containing project references for the whole workspace
   const rootTsconfigPath = 'tsconfig.json';
   const rootTsconfig = readJson<Tsconfig>(tree, rootTsconfigPath);

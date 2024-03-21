@@ -3,6 +3,8 @@ import { minimatch } from 'minimatch';
 import { TempFs } from 'nx/src/internal-testing-utils/temp-fs';
 import { TscPluginOptions, createNodes } from './plugin';
 
+// TODO FROM MIRO: WILL MY CHANGES WITH LOCAL PATH MAPPINGS FIX THE LINT ISSUE WITH PATH MAPPINGS BEING AT THE ROOT?
+
 describe('@nx/tsc', () => {
   let context: CreateNodesContext;
   let cwd = process.cwd();
