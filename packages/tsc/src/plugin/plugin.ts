@@ -87,26 +87,24 @@ export const createNodes: CreateNodes<TscPluginOptions> = [
       return {};
     }
 
-    // const hash = calculateHashForCreateNodes(
-    //   projectRoot,
-    //   pluginOptions,
-    //   context,
-    //   [getLockFileName(detectPackageManager(context.workspaceRoot))]
-    // );
-
-    // const targets = targetsCache[hash]
-    //   ? targetsCache[hash]
-    //   : buildTscTargets(configFilePath, projectRoot, pluginOptions, context);
-
-    const targets = buildTscTargets(
-      configFilePath,
+    const hash = calculateHashForCreateNodes(
       projectRoot,
-      siblingFiles,
       pluginOptions,
-      context
+      context,
+      [getLockFileName(detectPackageManager(context.workspaceRoot))]
     );
 
-    // calculatedTargets[hash] = targets;
+    const targets = targetsCache[hash]
+      ? targetsCache[hash]
+      : buildTscTargets(
+          configFilePath,
+          projectRoot,
+          siblingFiles,
+          pluginOptions,
+          context
+        );
+
+    calculatedTargets[hash] = targets;
 
     return {
       projects: {
