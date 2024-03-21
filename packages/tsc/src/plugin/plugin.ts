@@ -27,6 +27,20 @@ export interface TscPluginOptions {
       };
 }
 
+export interface NormalizedPluginOptions {
+  typecheck:
+    | false
+    | {
+        targetName: string;
+      };
+  build:
+    | false
+    | {
+        targetName: string;
+        configName: string;
+      };
+}
+
 const cachePath = join(projectGraphCacheDirectory, 'tsc.hash');
 const targetsCache = existsSync(cachePath) ? readTargetsCache() : {};
 
@@ -73,18 +87,26 @@ export const createNodes: CreateNodes<TscPluginOptions> = [
       return {};
     }
 
-    const hash = calculateHashForCreateNodes(
+    // const hash = calculateHashForCreateNodes(
+    //   projectRoot,
+    //   pluginOptions,
+    //   context,
+    //   [getLockFileName(detectPackageManager(context.workspaceRoot))]
+    // );
+
+    // const targets = targetsCache[hash]
+    //   ? targetsCache[hash]
+    //   : buildTscTargets(configFilePath, projectRoot, pluginOptions, context);
+
+    const targets = buildTscTargets(
+      configFilePath,
       projectRoot,
+      siblingFiles,
       pluginOptions,
-      context,
-      [getLockFileName(detectPackageManager(context.workspaceRoot))]
+      context
     );
 
-    const targets = targetsCache[hash]
-      ? targetsCache[hash]
-      : buildTscTargets(configFilePath, projectRoot, pluginOptions, context);
-
-    calculatedTargets[hash] = targets;
+    // calculatedTargets[hash] = targets;
 
     return {
       projects: {
@@ -100,13 +122,17 @@ export const createNodes: CreateNodes<TscPluginOptions> = [
 function buildTscTargets(
   configFilePath: string,
   projectRoot: string,
+  siblingFiles: string[],
   options: NormalizedPluginOptions,
   context: CreateNodesContext
 ) {
   const targets: Record<string, TargetConfiguration> = {};
 
-  // Typecheck target
-  if (options.typecheck) {
+  // Typecheck target for the tsconfig.json file
+  if (
+    siblingFiles.some((f) => f.endsWith('tsconfig.json')) &&
+    options.typecheck
+  ) {
     const targetName = options.typecheck.targetName;
     if (!targets[targetName]) {
       targets[targetName] = {
@@ -124,55 +150,26 @@ function buildTscTargets(
   if (options.build) {
     const targetName = options.build.targetName;
     if (!targets[targetName]) {
-      targets[targetName] = {
-        dependsOn: [`^${targetName}`],
-        command: `tsc -b ${options.build.configName} --pretty --verbose`,
-        options: { cwd: projectRoot },
-        cache: true,
-        //   inputs: getInputs(namedInputs),
-        //   outputs: getOutputs(projectRoot, cypressConfig, 'e2e'),
-      };
+      const tsconfigBuildFilePath = join(
+        context.workspaceRoot,
+        projectRoot,
+        options.build.configName
+      );
+      // Only add the build target if the configured config file is available in the current project
+      if (existsSync(tsconfigBuildFilePath)) {
+        targets[targetName] = {
+          dependsOn: [`^${targetName}`],
+          command: `tsc -b ${options.build.configName} --pretty --verbose`,
+          options: { cwd: projectRoot },
+          cache: true,
+          //   inputs: getInputs(namedInputs),
+          //   outputs: getOutputs(projectRoot, cypressConfig, 'e2e'),
+        };
+      }
     }
   }
 
   return targets;
-}
-
-/**
- * Load the module after ensuring that the require cache is cleared.
- */
-// const packageInstallationDirectories = ['node_modules', '.yarn'];
-
-// function load(path: string): any {
-//   // Clear cache if the path is in the cache
-//   if (require.cache[path]) {
-//     for (const k of Object.keys(require.cache)) {
-//       // We don't want to clear the require cache of installed packages.
-//       // Clearing them can cause some issues when running Nx without the daemon
-//       // and may cause issues for other packages that use the module state
-//       // in some to store cached information.
-//       if (!packageInstallationDirectories.some((dir) => k.includes(dir))) {
-//         delete require.cache[k];
-//       }
-//     }
-//   }
-
-//   // Then require
-//   return require(path);
-// }
-
-export interface NormalizedPluginOptions {
-  typecheck:
-    | false
-    | {
-        targetName: string;
-      };
-  build:
-    | false
-    | {
-        targetName: string;
-        configName: string;
-      };
 }
 
 export function normalizePluginOptions(
@@ -205,7 +202,7 @@ export function normalizePluginOptions(
     build = false;
   } else if (pluginOptions.build && typeof pluginOptions.build !== 'boolean') {
     build = {
-      targetName: pluginOptions.build.targetName ?? defaultTypecheckTargetName,
+      targetName: pluginOptions.build.targetName ?? defaultBuildTargetName,
       configName: pluginOptions.build.configName ?? defaultBuildConfigName,
     };
   }
