@@ -110,6 +110,7 @@ function buildTscTargets(
     const targetName = options.typecheck.targetName;
     if (!targets[targetName]) {
       targets[targetName] = {
+        dependsOn: [`^${targetName}`],
         command: `tsc --build --pretty --verbose`,
         options: { cwd: projectRoot },
         cache: true,
@@ -124,7 +125,8 @@ function buildTscTargets(
     const targetName = options.build.targetName;
     if (!targets[targetName]) {
       targets[targetName] = {
-        command: `tsc -p ${options.build.configName}`,
+        dependsOn: [`^${targetName}`],
+        command: `tsc -b ${options.build.configName} --pretty --verbose`,
         options: { cwd: projectRoot },
         cache: true,
         //   inputs: getInputs(namedInputs),
