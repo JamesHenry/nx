@@ -73,6 +73,8 @@ export const createNodes: CreateNodes<TscPluginOptions> = [
     const pluginOptions = normalizePluginOptions(options);
     const projectRoot = dirname(configFilePath);
 
+    // TODO: play with standalone projects
+
     // Do not create a project for the root tsconfig.json files
     if (projectRoot === '.') {
       return {};
@@ -125,6 +127,8 @@ function buildTscTargets(
   context: CreateNodesContext
 ) {
   const targets: Record<string, TargetConfiguration> = {};
+
+  // TODO: Only attribute this target to the tsconfig.json (not currently the case)
 
   // Typecheck target for the tsconfig.json file
   if (
