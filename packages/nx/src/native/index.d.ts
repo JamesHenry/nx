@@ -7,6 +7,15 @@ export declare class ExternalObject<T> {
     [K: symbol]: T
   }
 }
+export declare class AppLifeCycle {
+  constructor(projectNames: Array<string>, tasks: Array<Task>, nxArgs: object, overrides: object)
+  scheduleTask(task: Task): void
+  startTasks(tasks: Array<Task>, metadata: object): void
+  printTaskTerminalOutput(task: Task, status: string, output: string): void
+  endTasks(taskResults: Array<TaskResult>, metadata: TaskMetadata): void
+  __runCommandsForTask(task: Task, options: NormalizedRunCommandsOptions): Promise<RunningTask>
+}
+
 export declare class ChildProcess {
   kill(): void
   onExit(callback: (message: string) => void): void
@@ -53,6 +62,16 @@ export declare class NxTaskHistory {
   recordTaskRuns(taskRuns: Array<TaskRun>): void
   getFlakyTasks(hashes: Array<string>): Array<string>
   getEstimatedTaskTimings(targets: Array<TaskTarget>): Record<string, number>
+}
+
+export declare class RunningTask {
+  /**
+   * Get results always needs the up to date pty instance, so we can't embed this in the __runCommandsForTask
+   * method, and instead need to look up the pty instance in the TasksList component.
+   */
+  getResults(): Promise<{ code: number; terminalOutput: string }>
+  onExit(callback: (arg0: number, arg1: string) => any): void
+  kill(signal?: number | undefined | null): Promise<void>
 }
 
 export declare class RustPseudoTerminal {
@@ -121,6 +140,8 @@ export declare export function connectToNxDb(cacheDir: string, nxVersion: string
 
 export declare export function copy(src: string, dest: string): void
 
+export declare export function createExternalAppLifecycle(projectNames: Array<string>, tasks: Array<Task>, nxArgs: object, overrides: object): ExternalObject<AppLifeCycle>
+
 export interface DepsOutputsInput {
   dependentTasksOutputFiles: string
   transitive?: boolean
@@ -147,6 +168,8 @@ export interface ExternalNode {
   version: string
   hash?: string
 }
+
+export declare export function extractLifeCycleRef(appLifecycle: ExternalObject<AppLifeCycle>): AppLifeCycle
 
 export interface FileData {
   file: string
@@ -194,6 +217,8 @@ export interface HasherOptions {
 
 export declare export function hashFile(file: string): string | null
 
+export declare export function initTerminal(appLifecycle: ExternalObject<AppLifeCycle>, doneCallback: () => any): void
+
 export interface InputsInput {
   input: string
   dependencies?: boolean
@@ -201,6 +226,32 @@ export interface InputsInput {
 }
 
 export const IS_WASM: boolean
+
+export interface NormalizedCommandOptions {
+  command: string
+  forwardAllArgs?: boolean
+}
+
+export interface NormalizedRunCommandsOptions {
+  commands: Array<NormalizedCommandOptions>
+  unknownOptions?: Record<string, any>
+  parsedArgs: Record<string, any>
+  unparsedCommandArgs?: Record<string, any>
+  args?: string
+  readyWhenStatus: Array<ReadyWhenStatus>
+  command?: string | string[]
+  color?: boolean
+  parallel?: boolean
+  readyWhen?: Array<string>
+  cwd?: string
+  env?: Record<string, string>
+  forwardAllArgs?: boolean
+  envFile?: string
+  __unparsed__: Array<string>
+  usePty?: boolean
+  streamOutput?: boolean
+  tty?: boolean
+}
 
 /** Stripped version of the NxJson interface for use in rust */
 export interface NxJson {
@@ -232,7 +283,14 @@ export interface ProjectGraph {
   externalNodes: Record<string, ExternalNode>
 }
 
+export interface ReadyWhenStatus {
+  stringToMatch: string
+  found: boolean
+}
+
 export declare export function remove(src: string): void
+
+export declare export function restoreTerminal(): void
 
 export interface RuntimeInput {
   runtime: string
@@ -254,10 +312,44 @@ export interface Task {
   projectRoot?: string
 }
 
+export interface Task {
+  id: string
+  target: TaskTarget
+  overrides: any
+  outputs: Array<string>
+  projectRoot?: string
+  hash?: string
+  startTime?: number
+  endTime?: number
+  cache?: boolean
+  parallelism: boolean
+  continuous?: boolean
+}
+
 export interface TaskGraph {
   roots: Array<string>
   tasks: Record<string, Task>
   dependencies: Record<string, Array<string>>
+}
+
+export interface TaskMetadata {
+  groupId: number
+}
+
+export interface TaskOutput {
+  code: number
+  terminalOutput: string
+}
+
+export interface TaskOverrides {
+
+}
+
+export interface TaskResult {
+  task: Task
+  status: string
+  code: number
+  terminalOutput?: string
 }
 
 export interface TaskRun {
@@ -266,6 +358,12 @@ export interface TaskRun {
   code: number
   start: number
   end: number
+}
+
+export interface TaskTarget {
+  project: string
+  target: string
+  configuration?: string
 }
 
 export interface TaskTarget {
