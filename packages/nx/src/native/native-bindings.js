@@ -361,12 +361,14 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
+module.exports.AppLifeCycle = nativeBinding.AppLifeCycle
 module.exports.ChildProcess = nativeBinding.ChildProcess
 module.exports.FileLock = nativeBinding.FileLock
 module.exports.HashPlanner = nativeBinding.HashPlanner
 module.exports.ImportResult = nativeBinding.ImportResult
 module.exports.NxCache = nativeBinding.NxCache
 module.exports.NxTaskHistory = nativeBinding.NxTaskHistory
+module.exports.RunningTask = nativeBinding.RunningTask
 module.exports.RustPseudoTerminal = nativeBinding.RustPseudoTerminal
 module.exports.TaskDetails = nativeBinding.TaskDetails
 module.exports.TaskHasher = nativeBinding.TaskHasher
@@ -375,16 +377,20 @@ module.exports.WorkspaceContext = nativeBinding.WorkspaceContext
 module.exports.closeDbConnection = nativeBinding.closeDbConnection
 module.exports.connectToNxDb = nativeBinding.connectToNxDb
 module.exports.copy = nativeBinding.copy
+module.exports.createExternalAppLifecycle = nativeBinding.createExternalAppLifecycle
 module.exports.EventType = nativeBinding.EventType
 module.exports.expandOutputs = nativeBinding.expandOutputs
+module.exports.extractLifeCycleRef = nativeBinding.extractLifeCycleRef
 module.exports.findImports = nativeBinding.findImports
 module.exports.getBinaryTarget = nativeBinding.getBinaryTarget
 module.exports.getFilesForOutputs = nativeBinding.getFilesForOutputs
 module.exports.getTransformableOutputs = nativeBinding.getTransformableOutputs
 module.exports.hashArray = nativeBinding.hashArray
 module.exports.hashFile = nativeBinding.hashFile
+module.exports.initTerminal = nativeBinding.initTerminal
 module.exports.IS_WASM = nativeBinding.IS_WASM
 module.exports.remove = nativeBinding.remove
+module.exports.restoreTerminal = nativeBinding.restoreTerminal
 module.exports.testOnlyTransferFileMap = nativeBinding.testOnlyTransferFileMap
 module.exports.transferProjectGraph = nativeBinding.transferProjectGraph
 module.exports.validateOutputs = nativeBinding.validateOutputs
