@@ -17,6 +17,7 @@ use tokio::{
 };
 use futures::{FutureExt, StreamExt};
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 pub type Frame<'a> = ratatui::Frame<'a>;
 
@@ -85,22 +86,30 @@ impl Tui {
             let mut tick_interval = tokio::time::interval(tick_delay);
             let mut render_interval = tokio::time::interval(render_delay);
             _event_tx.send(Event::Init).unwrap();
+            debug!("Start Listening for Crossterm Events");
             loop {
-                let tick_delay = tick_interval.tick();
-                let render_delay = render_interval.tick();
                 let crossterm_event = reader.next().fuse();
+                // debug!("Crossterm Event: {:?}", crossterm_event);
                 tokio::select! {
                   _ = _cancellation_token.cancelled() => {
+                    debug!("Got a cancellation token");
                     break;
                   }
+                  _ = tick_interval.tick() => {
+                      _event_tx.send(Event::Tick).expect("cannot send event");
+                  },
+                  _ = render_interval.tick() => {
+                      _event_tx.send(Event::Render).expect("cannot send event");
+                  },
                   maybe_event = crossterm_event => {
+                    debug!("Maybe Crossterm Event: {:?}", maybe_event);
                     match maybe_event {
                       Some(Ok(evt)) => {
+                        debug!("Crossterm Event: {:?}", evt);
                         match evt {
-                          CrosstermEvent::Key(key) => {
-                            if key.kind == KeyEventKind::Press {
+                          CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
+                            debug!("Key: {:?}", key);
                             _event_tx.send(Event::Key(key)).unwrap();
-                            }
                           },
                           CrosstermEvent::Mouse(mouse) => {
                             _event_tx.send(Event::Mouse(mouse)).unwrap();
@@ -117,22 +126,25 @@ impl Tui {
                           CrosstermEvent::Paste(s) => {
                             _event_tx.send(Event::Paste(s)).unwrap();
                           },
+                          _ => {
+                            debug!("Unhandled Crossterm Event: {:?}", evt);
+                            continue;
+                          }
                         }
                       }
-                      Some(Err(_)) => {
+                      Some(Err(e)) => {
+                        debug!("Got an error event: {}", e);
                         _event_tx.send(Event::Error).unwrap();
                       }
-                      None => {},
+                      None => {
+                        debug!("Crossterm Stream Stoped");
+                        break;
+                    },
                     }
-                  },
-                  _ = tick_delay => {
-                      _event_tx.send(Event::Tick).unwrap();
-                  },
-                  _ = render_delay => {
-                      _event_tx.send(Event::Render).unwrap();
                   },
                 }
             }
+            debug!("Crossterm Thread Finished")
         });
     }
 
@@ -155,6 +167,7 @@ impl Tui {
     }
 
     pub fn enter(&mut self) -> Result<()> {
+        debug!("Enabling Raw Mode");
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(std::io::stderr(), EnterAlternateScreen, cursor::Hide)?;
         self.start();

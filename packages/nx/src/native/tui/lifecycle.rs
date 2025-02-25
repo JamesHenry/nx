@@ -1,27 +1,28 @@
+use super::components::{tasks_list, terminal_pane};
+use super::task::{
+    Task as RustTask, TaskOverrides as RustTaskOverrides, TaskResult as RustTaskResult,
+    TaskTarget as RustTaskTarget,
+};
+use super::utils::initialize_panic_handler;
+use super::{
+    action::Action,
+    app::Focus,
+    components::{help_popup::HelpPopup, tasks_list::TasksList},
+};
+use super::{app, pty, task, tui};
+use crate::native::logger::enable_logger;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi::JsObject;
-use std::collections::HashMap;
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
-
-use super::components::{tasks_list, terminal_pane};
-use super::task::{
-    Task as RustTask, TaskOverrides as RustTaskOverrides, TaskResult as RustTaskResult,
-    TaskTarget as RustTaskTarget,
-};
-use super::utils::{initialize_logging, initialize_panic_handler, log_debug};
-use super::{app, pty, task, tui};
+use std::collections::HashMap;
 use tasks_list::TaskStatus;
-use super::{
-    action::Action,
-    app::Focus,
-    components::{help_popup::HelpPopup, tasks_list::TasksList},
-};
+use tracing::debug;
 
 static mut DONE_CALLBACK: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>> = None;
 
@@ -138,7 +139,7 @@ impl AppLifeCycle {
         let target_names: Vec<String> = nx_args
             .get::<_, Vec<String>>("targets")
             .unwrap_or_else(|_| {
-                log_debug("Failed to get targets from nx_args, defaulting to empty vec");
+                debug!("Failed to get targets from nx_args, defaulting to empty vec");
                 vec![].into()
             })
             .unwrap_or_default();
@@ -354,7 +355,8 @@ pub fn init_terminal(
     done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
 ) -> napi::Result<()> {
     // Initialize logging and panic handlers first
-    initialize_logging().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    debug!("Intitializing Terminal UI");
+    enable_logger();
     initialize_panic_handler().map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     // Set up better-panic to capture backtraces
@@ -394,6 +396,7 @@ pub fn init_terminal(
     let mut tui = tui::Tui::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
     tui.enter()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    debug!("Initialized Terminal UI");
 
     // Set tick and frame rates
     tui.tick_rate(10.0);
@@ -406,6 +409,7 @@ pub fn init_terminal(
 
     // Initialize action channel
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
+    debug!("Initialized Action Channel");
 
     // Initialize components
     if let Ok(mut app) = app_mutex.lock() {
@@ -414,6 +418,7 @@ pub fn init_terminal(
             component.init().ok();
         }
     }
+    debug!("Initialized Components");
 
     napi::tokio::spawn(async move {
         loop {
@@ -480,7 +485,7 @@ pub fn init_terminal(
                         Action::Render => {
                             tui.draw(|f| {
                                 let area = f.area();
-                                
+
                                 // Check for minimum viable viewport size at the app level
                                 if area.height < 12 || area.width < 40 {
                                     let message = Line::from(vec![
@@ -499,13 +504,13 @@ pub fn init_terminal(
                                     // Create empty lines for vertical centering
                                     let empty_line = Line::from("");
                                     let mut lines = vec![];
-                                    
+
                                     // Add empty lines to center vertically
                                     let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
                                     for _ in 0..vertical_padding {
                                         lines.push(empty_line.clone());
                                     }
-                                    
+
                                     // Add the message
                                     lines.push(message);
 
@@ -546,10 +551,13 @@ pub fn init_terminal(
 
                     // Check if we should quit
                     if app.should_quit {
+                        debug!("Quitting TUI");
                         tui.stop().ok();
                         unsafe {
                             if let Some(cb) = DONE_CALLBACK.take() {
+                                debug!("Exitting TUI");
                                 tui.exit().ok();
+                                debug!("Calling exit callback");
                                 cb.call(
                                     (),
                                     napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking,

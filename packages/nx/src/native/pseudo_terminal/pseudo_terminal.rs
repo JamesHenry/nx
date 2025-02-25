@@ -55,11 +55,6 @@ pub fn create_pseudo_terminal() -> napi::Result<PseudoTerminal> {
             }
         });
     }
-    // Why do we do this here when it's already done when running a command?
-    if std::io::stdout().is_tty() {
-        trace!("Enabling raw mode");
-        enable_raw_mode().expect("Failed to enter raw terminal mode");
-    }
 
     let mut reader = pty_pair.master.try_clone_reader()?;
     let (message_tx, message_rx) = unbounded();
@@ -115,10 +110,6 @@ pub fn create_pseudo_terminal() -> napi::Result<PseudoTerminal> {
 
         printing_tx.send(()).ok();
     });
-    if std::io::stdout().is_tty() {
-        trace!("Disabling raw mode");
-        disable_raw_mode().expect("Failed to exit raw terminal mode");
-    }
     Ok(PseudoTerminal {
         quiet,
         running,

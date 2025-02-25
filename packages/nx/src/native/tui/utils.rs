@@ -57,21 +57,6 @@ pub fn initialize_panic_handler() -> Result<()> {
     Ok(())
 }
 
-pub fn initialize_logging() -> Result<()> {
-    // TODO: Implement logging
-    Ok(())
-}
-
-pub fn log_debug(message: &str) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/nxr-debug.log")
-    {
-        writeln!(file, "{}", message).unwrap();
-    }
-}
-
 pub fn format_duration(duration_ms: u128) -> String {
     if duration_ms == 0 {
         "<1ms".to_string()

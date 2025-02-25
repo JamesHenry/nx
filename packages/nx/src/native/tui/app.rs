@@ -6,7 +6,7 @@ use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
 use ratatui::text::{Line, Span};
 use ratatui::style::Modifier;
-
+use tracing::debug;
 use super::task::{Task, CommandLookup};
 use super::{
     action::Action,
@@ -82,6 +82,7 @@ impl App {
             tui::Event::Render => action_tx.send(Action::Render)?,
             tui::Event::Resize(x, y) => action_tx.send(Action::Resize(x, y))?,
             tui::Event::Key(key) => {
+                debug!("Handling Key Event: {:?}", key);
                 // Handle Ctrl+C to quit
                 if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
                     return Ok(true);
@@ -500,7 +501,7 @@ impl App {
                     Action::Render => {
                         tui.draw(|f| {
                             let area = f.area();
-                            
+
                             // Check for minimum viable viewport size at the app level
                             if area.height < 12 || area.width < 40 {
                                 let message = Line::from(vec![
@@ -519,13 +520,13 @@ impl App {
                                 // Create empty lines for vertical centering
                                 let empty_line = Line::from("");
                                 let mut lines = vec![];
-                                
+
                                 // Add empty lines to center vertically
                                 let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
                                 for _ in 0..vertical_padding {
                                     lines.push(empty_line.clone());
                                 }
-                                
+
                                 // Add the message
                                 lines.push(message);
 
