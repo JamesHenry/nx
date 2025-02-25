@@ -61,6 +61,7 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio = { version = "1.32.0", features = ["full"] }
 tokio-util = "0.7.9"
 tui-term = "0.2.0"
+tracing-appender = "0.2"
 walkdir = '2.3.3'
 xxhash-rust = { version = '0.8.5', features = ['xxh3', 'xxh64'] }
 vt100-ctt = { git = "https://github.com/JamesHenry/vt100-rust", rev = "1de895505fe9f697aadac585e4075b8fb45c880d" }

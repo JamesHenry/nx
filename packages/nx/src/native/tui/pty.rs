@@ -4,6 +4,7 @@ use std::{
     io::{self, Read, Write},
     sync::{Arc, Mutex, RwLock},
 };
+use tracing::trace;
 use vt100_ctt::Parser;
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ impl PtyInstance {
     ) -> io::Result<Self> {
         let pty_system = NativePtySystem::default();
 
+        trace!("command: {}", &command);
         let mut cmd = CommandBuilder::new(command);
         cmd.args(args);
 

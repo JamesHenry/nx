@@ -17,6 +17,7 @@ use tokio::{
 };
 use futures::{FutureExt, StreamExt};
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 pub type Frame<'a> = ratatui::Frame<'a>;
 
@@ -89,13 +90,16 @@ impl Tui {
                 let tick_delay = tick_interval.tick();
                 let render_delay = render_interval.tick();
                 let crossterm_event = reader.next().fuse();
+                // debug!("Crossterm Event: {:?}", crossterm_event);
                 tokio::select! {
                   _ = _cancellation_token.cancelled() => {
                     break;
                   }
                   maybe_event = crossterm_event => {
+                    debug!("Maybe Crossterm Event: {:?}", maybe_event);
                     match maybe_event {
                       Some(Ok(evt)) => {
+                        debug!("Crossterm Event: {:?}", evt);
                         match evt {
                           CrosstermEvent::Key(key) => {
                             if key.kind == KeyEventKind::Press {
@@ -155,7 +159,8 @@ impl Tui {
     }
 
     pub fn enter(&mut self) -> Result<()> {
-        crossterm::terminal::enable_raw_mode()?;
+        // debug!("Enabling Raw Mode");
+        // crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(std::io::stderr(), EnterAlternateScreen, cursor::Hide)?;
         self.start();
         Ok(())

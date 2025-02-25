@@ -1,3 +1,4 @@
+use std::any::Any;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi::JsObject;
@@ -8,7 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-
+use tracing::debug;
 use super::components::{tasks_list, terminal_pane};
 use super::task::{
     Task as RustTask, TaskOverrides as RustTaskOverrides, TaskResult as RustTaskResult,
@@ -17,6 +18,7 @@ use super::task::{
 use super::utils::{initialize_logging, initialize_panic_handler, log_debug};
 use super::{app, pty, task, tui};
 use tasks_list::TaskStatus;
+use crate::native::logger::enable_logger;
 use super::{
     action::Action,
     app::Focus,
@@ -354,7 +356,8 @@ pub fn init_terminal(
     done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
 ) -> napi::Result<()> {
     // Initialize logging and panic handlers first
-    initialize_logging().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    enable_logger();
+    debug!("Intitializing Terminal UI");
     initialize_panic_handler().map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     // Set up better-panic to capture backtraces
@@ -394,10 +397,11 @@ pub fn init_terminal(
     let mut tui = tui::Tui::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
     tui.enter()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    debug!("Initialized Terminal UI");
 
     // Set tick and frame rates
     tui.tick_rate(10.0);
-    tui.frame_rate(60.0);
+    tui.frame_rate(144.0);;
 
     // Store callback for cleanup
     unsafe {
@@ -406,6 +410,7 @@ pub fn init_terminal(
 
     // Initialize action channel
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
+    debug!("Initialized Action Channel");
 
     // Initialize components
     if let Ok(mut app) = app_mutex.lock() {
@@ -414,11 +419,13 @@ pub fn init_terminal(
             component.init().ok();
         }
     }
+    debug!("Initialized Components");
 
     napi::tokio::spawn(async move {
         loop {
             // Handle events using our Tui abstraction
             if let Some(event) = tui.next().await {
+                // debug!("Handling Event: {:?}", event);
                 if let Ok(mut app) = app_mutex.lock() {
                     if let Ok(true) = app.handle_event(event, &action_tx) {
                         unsafe {
@@ -480,7 +487,7 @@ pub fn init_terminal(
                         Action::Render => {
                             tui.draw(|f| {
                                 let area = f.area();
-                                
+
                                 // Check for minimum viable viewport size at the app level
                                 if area.height < 12 || area.width < 40 {
                                     let message = Line::from(vec![
@@ -499,13 +506,13 @@ pub fn init_terminal(
                                     // Create empty lines for vertical centering
                                     let empty_line = Line::from("");
                                     let mut lines = vec![];
-                                    
+
                                     // Add empty lines to center vertically
                                     let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
                                     for _ in 0..vertical_padding {
                                         lines.push(empty_line.clone());
                                     }
-                                    
+
                                     // Add the message
                                     lines.push(message);
 
