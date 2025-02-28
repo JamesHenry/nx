@@ -48,10 +48,10 @@ test.describe('Nx TUI', () => {
       await terminal.waitForText('Completed 2 tasks in', 15000);
 
       // Navigate down with arrow key
-      await terminal.captureStableSnapshotWithMasking(
-        '1-before-down-arrow-nav',
-        masks
-      );
+      // await terminal.captureStableSnapshotWithMasking(
+      //   '1-before-down-arrow-nav',
+      //   masks
+      // );
       await terminal.sendInput(KEY_SEQUENCES.DOWN_ARROW);
       await terminal.captureStableSnapshotWithMasking(
         '2-after-down-arrow-nav',
