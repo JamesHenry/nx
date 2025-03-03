@@ -74,29 +74,19 @@ async function getTerminalOutputLifeCycle(
   overrides: Record<string, unknown>
 ): Promise<{ lifeCycle: LifeCycle; renderIsDone: Promise<void> }> {
   if (process.env.NX_TUI === 'true') {
-    const {
-      createExternalAppLifecycle,
-      extractLifeCycleRef,
-      initTerminal,
-      restoreTerminal,
-    } = require('../native');
+    const { AppLifeCycle, restoreTerminal } = require('../native');
 
-    const externalLifeCycle = createExternalAppLifecycle(
-      projectNames,
-      tasks,
-      nxArgs,
-      overrides
-    );
+    const lifeCycle = new AppLifeCycle(projectNames, tasks, nxArgs, overrides);
 
     const renderIsDone = new Promise<void>((resolve) => {
-      initTerminal(externalLifeCycle, () => {
+      lifeCycle.init(() => {
         resolve();
       });
     }).then(() => {
       restoreTerminal();
     });
     return {
-      lifeCycle: extractLifeCycleRef(externalLifeCycle),
+      lifeCycle,
       renderIsDone,
     };
   }

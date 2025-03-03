@@ -11,6 +11,7 @@ use super::{
 };
 use super::{app, pty, task, tui};
 use crate::native::logger::enable_logger;
+use crate::native::tui::app::App;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi::JsObject;
@@ -21,10 +22,9 @@ use ratatui::{
     widgets::Paragraph,
 };
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tasks_list::TaskStatus;
 use tracing::debug;
-
-static mut DONE_CALLBACK: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>> = None;
 
 #[napi(object)]
 #[derive(Clone, serde::Serialize)]
@@ -120,7 +120,7 @@ pub struct TaskMetadata {
 #[napi]
 #[derive(Clone)]
 pub struct AppLifeCycle {
-    app: std::sync::Arc<std::sync::Mutex<app::App>>,
+    app: Arc<Mutex<App>>,
 }
 
 #[napi]
@@ -150,6 +150,111 @@ impl AppLifeCycle {
                 app::App::new(10.0, 60.0, internal_tasks, target_names).unwrap(),
             )),
         }
+    }
+
+    #[napi]
+    pub fn init(
+        &self,
+        done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+    ) -> napi::Result<()> {
+        // Initialize logging and panic handlers first
+        debug!("Initializing Terminal UI");
+        enable_logger();
+        initialize_panic_handler().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        // Set up better-panic to capture backtraces
+        better_panic::install();
+
+        // Create a file to capture panic output
+        let log_file = std::fs::File::create("nxr-panic.log")
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create log file: {}", e)))?;
+        let log_file = std::sync::Arc::new(std::sync::Mutex::new(log_file));
+
+        // Set up a panic hook that writes to both stderr and our log file
+        let log_file_clone = log_file.clone();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            let backtrace = std::backtrace::Backtrace::capture();
+            let thread = std::thread::current();
+            let thread_name = thread.name().unwrap_or("<unnamed>");
+
+            let msg = format!(
+                "\n\nThread '{}' panicked at '{}'\n{:?}\n\n",
+                thread_name, panic_info, backtrace
+            );
+
+            // Write to stderr
+            eprintln!("{}", msg);
+
+            // Also write to our log file
+            if let Ok(mut file) = log_file_clone.lock() {
+                use std::io::Write;
+                let _ = writeln!(file, "{}", msg);
+                let _ = file.flush();
+            }
+        }));
+
+        let app_mutex = self.app.clone();
+
+        // Initialize our Tui abstraction
+        let mut tui = tui::Tui::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        tui.enter()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        debug!("Initialized Terminal UI");
+
+        // Set tick and frame rates
+        tui.tick_rate(10.0);
+        tui.frame_rate(60.0);
+
+        // Initialize action channel
+        let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
+        debug!("Initialized Action Channel");
+
+        // Initialize components
+        if let Ok(mut app) = app_mutex.lock() {
+            // Store callback for cleanup
+            app.set_done_callback(done_callback);
+
+            for component in app.components.iter_mut() {
+                component.register_action_handler(action_tx.clone()).ok();
+                component.init().ok();
+            }
+        }
+        debug!("Initialized Components");
+
+        napi::tokio::spawn(async move {
+            loop {
+                // Handle events using our Tui abstraction
+                if let Some(event) = tui.next().await {
+                    if let Ok(mut app) = app_mutex.lock() {
+                        if let Ok(true) = app.handle_event(event, &action_tx) {
+                            tui.exit().ok();
+                            app.call_done_callback();
+                            break;
+                        }
+                    }
+                }
+
+                // Process actions
+                while let Ok(action) = action_rx.try_recv() {
+                    if let Ok(mut app) = app_mutex.lock() {
+                        app.handle_action(&mut tui, action, &action_tx);
+
+                        // Check if we should quit
+                        if app.should_quit {
+                            debug!("Quitting TUI");
+                            tui.stop().ok();
+                            debug!("Exiting TUI");
+                            tui.exit().ok();
+                            debug!("Calling exit callback");
+                            app.call_done_callback();
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
     }
 
     #[napi]
@@ -320,249 +425,7 @@ impl AppLifeCycle {
 }
 
 #[napi]
-pub fn create_external_app_lifecycle(
-    project_names: Vec<String>,
-    tasks: Vec<Task>,
-    nx_args: JsObject,
-    overrides: JsObject,
-) -> napi::Result<External<AppLifeCycle>> {
-    let app_lifecycle = AppLifeCycle::new(project_names, tasks, nx_args, overrides);
-    Ok(External::new(app_lifecycle))
-}
-
-#[napi]
-pub fn extract_life_cycle_ref(app_lifecycle: External<AppLifeCycle>) -> AppLifeCycle {
-    app_lifecycle.as_ref().clone()
-}
-
-#[napi]
-pub fn init_terminal(
-    app_lifecycle: External<AppLifeCycle>,
-    done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
-) -> napi::Result<()> {
-    // Initialize logging and panic handlers first
-    debug!("Intitializing Terminal UI");
-    enable_logger();
-    initialize_panic_handler().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-
-    // Set up better-panic to capture backtraces
-    better_panic::install();
-
-    // Create a file to capture panic output
-    let log_file = std::fs::File::create("nxr-panic.log")
-        .map_err(|e| napi::Error::from_reason(format!("Failed to create log file: {}", e)))?;
-    let log_file = std::sync::Arc::new(std::sync::Mutex::new(log_file));
-
-    // Set up a panic hook that writes to both stderr and our log file
-    let log_file_clone = log_file.clone();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        let backtrace = std::backtrace::Backtrace::capture();
-        let thread = std::thread::current();
-        let thread_name = thread.name().unwrap_or("<unnamed>");
-
-        let msg = format!(
-            "\n\nThread '{}' panicked at '{}'\n{:?}\n\n",
-            thread_name, panic_info, backtrace
-        );
-
-        // Write to stderr
-        eprintln!("{}", msg);
-
-        // Also write to our log file
-        if let Ok(mut file) = log_file_clone.lock() {
-            use std::io::Write;
-            let _ = writeln!(file, "{}", msg);
-            let _ = file.flush();
-        }
-    }));
-
-    let app_mutex = app_lifecycle.app.clone();
-
-    // Initialize our Tui abstraction
-    let mut tui = tui::Tui::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    tui.enter()
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    debug!("Initialized Terminal UI");
-
-    // Set tick and frame rates
-    tui.tick_rate(10.0);
-    tui.frame_rate(60.0);
-
-    // Store callback for cleanup
-    unsafe {
-        DONE_CALLBACK = Some(done_callback);
-    }
-
-    // Initialize action channel
-    let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
-    debug!("Initialized Action Channel");
-
-    // Initialize components
-    if let Ok(mut app) = app_mutex.lock() {
-        for component in app.components.iter_mut() {
-            component.register_action_handler(action_tx.clone()).ok();
-            component.init().ok();
-        }
-    }
-    debug!("Initialized Components");
-
-    napi::tokio::spawn(async move {
-        loop {
-            // Handle events using our Tui abstraction
-            if let Some(event) = tui.next().await {
-                if let Ok(mut app) = app_mutex.lock() {
-                    if let Ok(true) = app.handle_event(event, &action_tx) {
-                        unsafe {
-                            if let Some(cb) = DONE_CALLBACK.take() {
-                                tui.exit().ok();
-                                cb.call(
-                                    (),
-                                    napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking,
-                                );
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Process actions
-            while let Ok(action) = action_rx.try_recv() {
-                if let Ok(mut app) = app_mutex.lock() {
-                    if action != Action::Tick && action != Action::Render {
-                        log::debug!("{action:?}");
-                    }
-                    match action {
-                        Action::Tick => {
-                            app.last_tick_key_events.drain(..);
-                        }
-                        Action::Quit => app.should_quit = true,
-                        Action::Resize(w, h) => {
-                            tui.resize(Rect::new(0, 0, w, h)).ok();
-
-                            // Ensure the help popup is resized correctly
-                            if let Some(help_popup) = app
-                                .components
-                                .iter_mut()
-                                .find_map(|c| c.as_any_mut().downcast_mut::<HelpPopup>())
-                            {
-                                help_popup.handle_resize(w, h);
-                            }
-
-                            // Propagate resize to PTY instances
-                            if let Some(tasks_list) = app
-                                .components
-                                .iter_mut()
-                                .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-                            {
-                                tasks_list.handle_resize(w, h).ok();
-                            }
-                            tui.draw(|f| {
-                                for component in app.components.iter_mut() {
-                                    let r = component.draw(f, f.area());
-                                    if let Err(e) = r {
-                                        action_tx
-                                            .send(Action::Error(format!("Failed to draw: {:?}", e)))
-                                            .ok();
-                                    }
-                                }
-                            })
-                            .ok();
-                        }
-                        Action::Render => {
-                            tui.draw(|f| {
-                                let area = f.area();
-
-                                // Check for minimum viable viewport size at the app level
-                                if area.height < 12 || area.width < 40 {
-                                    let message = Line::from(vec![
-                                        Span::raw("  "),
-                                        Span::styled(
-                                            " NX ",
-                                            Style::reset()
-                                                .add_modifier(Modifier::BOLD)
-                                                .bg(Color::Red)
-                                                .fg(Color::Black),
-                                        ),
-                                        Span::raw("  "),
-                                        Span::raw("Please make your terminal viewport larger in order to view the tasks UI"),
-                                    ]);
-
-                                    // Create empty lines for vertical centering
-                                    let empty_line = Line::from("");
-                                    let mut lines = vec![];
-
-                                    // Add empty lines to center vertically
-                                    let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
-                                    for _ in 0..vertical_padding {
-                                        lines.push(empty_line.clone());
-                                    }
-
-                                    // Add the message
-                                    lines.push(message);
-
-                                    let paragraph = Paragraph::new(lines)
-                                        .alignment(Alignment::Center);
-                                    f.render_widget(paragraph, area);
-                                    return;
-                                }
-
-                                // Only render components if viewport is large enough
-                                // Draw main components with dimming if popup is focused
-                                let current_focus = (*app).focus();
-                                for component in app.components.iter_mut() {
-                                    if let Some(tasks_list) =
-                                        component.as_any_mut().downcast_mut::<TasksList>()
-                                    {
-                                        tasks_list.set_dimmed(matches!(current_focus, Focus::HelpPopup));
-                                        tasks_list.set_focus(current_focus);
-                                    }
-                                    let r = component.draw(f, f.area());
-                                    if let Err(e) = r {
-                                        action_tx
-                                            .send(Action::Error(format!("Failed to draw: {:?}", e)))
-                                            .ok();
-                                    }
-                                }
-                            }).ok();
-                        }
-                        _ => {}
-                    }
-
-                    // Update components
-                    for component in app.components.iter_mut() {
-                        if let Ok(Some(new_action)) = component.update(action.clone()) {
-                            action_tx.send(new_action).ok();
-                        }
-                    }
-
-                    // Check if we should quit
-                    if app.should_quit {
-                        debug!("Quitting TUI");
-                        tui.stop().ok();
-                        unsafe {
-                            if let Some(cb) = DONE_CALLBACK.take() {
-                                debug!("Exitting TUI");
-                                tui.exit().ok();
-                                debug!("Calling exit callback");
-                                cb.call(
-                                    (),
-                                    napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking,
-                                );
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    Ok(())
-}
-
-#[napi]
-pub fn restore_terminal() -> napi::Result<()> {
+pub fn restore_terminal() -> Result<()> {
     // TODO: Maybe need some additional cleanup here in addition to the tui cleanup performed at the end of the render loop?
     Ok(())
 }
@@ -570,10 +433,10 @@ pub fn restore_terminal() -> napi::Result<()> {
 #[napi]
 pub struct RunningTask {
     task: Task,
-    app: std::sync::Arc<std::sync::Mutex<app::App>>,
+    app: Arc<Mutex<App>>,
     exit_callback: Option<
-        std::sync::Arc<
-            std::sync::Mutex<Option<ThreadsafeFunction<(i32, String), ErrorStrategy::Fatal>>>,
+        Arc<
+            Mutex<Option<ThreadsafeFunction<(i32, String), ErrorStrategy::Fatal>>>,
         >,
     >,
 }
@@ -655,7 +518,7 @@ pub struct TaskOutput {
 }
 
 #[napi(object)]
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone)]
 pub struct NormalizedCommandOptions {
     pub command: String,
     #[napi(js_name = "forwardAllArgs")]
@@ -663,7 +526,7 @@ pub struct NormalizedCommandOptions {
 }
 
 #[napi(object)]
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone)]
 pub struct ReadyWhenStatus {
     #[napi(js_name = "stringToMatch")]
     pub string_to_match: String,

@@ -6,13 +6,16 @@ use super::{
 };
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Modifier;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
+use crate::native::tui::tui::Tui;
 
 pub struct App {
     pub tick_rate: f64,
@@ -22,6 +25,7 @@ pub struct App {
     pub last_tick_key_events: Vec<KeyEvent>,
     focus: Focus,
     previous_focus: Focus,
+    done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +55,7 @@ impl App {
             last_tick_key_events: Vec::new(),
             focus: Focus::TaskList,
             previous_focus: Focus::TaskList,
+            done_callback: None,
         })
     }
 
@@ -431,143 +436,126 @@ impl App {
         Ok(false)
     }
 
-    pub async fn run(&mut self) -> Result<()> {
-        let (action_tx, mut action_rx) = mpsc::unbounded_channel();
-
-        let mut tui = tui::Tui::new()?;
-        tui.tick_rate(self.tick_rate);
-        tui.frame_rate(self.frame_rate);
-        tui.enter()?;
-
-        for component in self.components.iter_mut() {
-            component.register_action_handler(action_tx.clone())?;
+    pub fn handle_action(&mut self, tui: &mut Tui, action: Action, action_tx: &UnboundedSender<Action>) {
+        if action != Action::Tick && action != Action::Render {
+            log::debug!("{action:?}");
         }
-
-        for component in self.components.iter_mut() {
-            component.init()?;
-        }
-
-        loop {
-            if let Some(e) = tui.next().await {
-                if self.handle_event(e, &action_tx)? {
-                    break;
-                }
+        match action {
+            Action::Tick => {
+                self.last_tick_key_events.drain(..);
             }
+            Action::Quit => self.should_quit = true,
+            Action::Resize(w, h) => {
+                tui.resize(Rect::new(0, 0, w, h)).ok();
 
-            while let Ok(action) = action_rx.try_recv() {
-                if action != Action::Tick && action != Action::Render {
-                    log::debug!("{action:?}");
+                // Ensure the help popup is resized correctly
+                if let Some(help_popup) = self
+                    .components
+                    .iter_mut()
+                    .find_map(|c| c.as_any_mut().downcast_mut::<HelpPopup>())
+                {
+                    help_popup.handle_resize(w, h);
                 }
-                match action {
-                    Action::Tick => {
-                        self.last_tick_key_events.drain(..);
-                    }
-                    Action::Quit => self.should_quit = true,
-                    Action::Resize(w, h) => {
-                        tui.resize(Rect::new(0, 0, w, h))?;
 
-                        // Ensure the help popup is resized correctly
-                        if let Some(help_popup) = self
-                            .components
-                            .iter_mut()
-                            .find_map(|c| c.as_any_mut().downcast_mut::<HelpPopup>())
-                        {
-                            help_popup.handle_resize(w, h);
+                // Propagate resize to PTY instances
+                if let Some(tasks_list) = self
+                    .components
+                    .iter_mut()
+                    .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
+                {
+                    tasks_list.handle_resize(w, h).ok();
+                }
+                tui.draw(|f| {
+                    for component in self.components.iter_mut() {
+                        let r = component.draw(f, f.area());
+                        if let Err(e) = r {
+                            action_tx
+                                .send(Action::Error(format!(
+                                    "Failed to draw: {:?}",
+                                    e
+                                )))
+                                .ok();
+                        }
+                    }
+                })
+                    .ok();
+            }
+            Action::Render => {
+                tui.draw(|f| {
+                    let area = f.area();
+
+                    // Check for minimum viable viewport size at the app level
+                    if area.height < 12 || area.width < 40 {
+                        let message = Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(
+                                " NX ",
+                                Style::reset()
+                                    .add_modifier(Modifier::BOLD)
+                                    .bg(Color::Red)
+                                    .fg(Color::Black),
+                            ),
+                            Span::raw("  "),
+                            Span::raw("Please make your terminal viewport larger in order to view the tasks UI"),
+                        ]);
+
+                        // Create empty lines for vertical centering
+                        let empty_line = Line::from("");
+                        let mut lines = vec![];
+
+                        // Add empty lines to center vertically
+                        let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
+                        for _ in 0..vertical_padding {
+                            lines.push(empty_line.clone());
                         }
 
-                        // Propagate resize to PTY instances
-                        if let Some(tasks_list) = self
-                            .components
-                            .iter_mut()
-                            .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
+                        // Add the message
+                        lines.push(message);
+
+                        let paragraph = Paragraph::new(lines)
+                            .alignment(Alignment::Center);
+                        f.render_widget(paragraph, area);
+                        return;
+                    }
+
+                    // Only render components if viewport is large enough
+                    // Draw main components with dimming if popup is focused
+                    let current_focus = self.focus();
+                    for component in self.components.iter_mut() {
+                        if let Some(tasks_list) =
+                            component.as_any_mut().downcast_mut::<TasksList>()
                         {
-                            tasks_list.handle_resize(w, h)?;
+                            tasks_list.set_dimmed(matches!(current_focus, Focus::HelpPopup));
+                            tasks_list.set_focus(current_focus);
                         }
-                        tui.draw(|f| {
-                            for component in self.components.iter_mut() {
-                                let r = component.draw(f, f.area());
-                                if let Err(e) = r {
-                                    action_tx
-                                        .send(Action::Error(format!("Failed to draw: {:?}", e)))
-                                        .unwrap();
-                                }
-                            }
-                        })?;
+                        let r = component.draw(f, f.area());
+                        if let Err(e) = r {
+                            action_tx
+                                .send(Action::Error(format!("Failed to draw: {:?}", e)))
+                                .ok();
+                        }
                     }
-                    Action::Render => {
-                        tui.draw(|f| {
-                            let area = f.area();
-
-                            // Check for minimum viable viewport size at the app level
-                            if area.height < 12 || area.width < 40 {
-                                let message = Line::from(vec![
-                                    Span::raw("  "),
-                                    Span::styled(
-                                        " NX ",
-                                        Style::reset()
-                                            .add_modifier(Modifier::BOLD)
-                                            .bg(Color::Red)
-                                            .fg(Color::Black),
-                                    ),
-                                    Span::raw("  "),
-                                    Span::raw("Please make your terminal viewport larger in order to view the tasks UI"),
-                                ]);
-
-                                // Create empty lines for vertical centering
-                                let empty_line = Line::from("");
-                                let mut lines = vec![];
-
-                                // Add empty lines to center vertically
-                                let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
-                                for _ in 0..vertical_padding {
-                                    lines.push(empty_line.clone());
-                                }
-
-                                // Add the message
-                                lines.push(message);
-
-                                let paragraph = Paragraph::new(lines)
-                                    .alignment(Alignment::Center);
-                                f.render_widget(paragraph, area);
-                                return;
-                            }
-
-                            // Only render components if viewport is large enough
-                            // Draw main components with dimming if popup is focused
-                            for component in self.components.iter_mut() {
-                                if let Some(tasks_list) =
-                                    component.as_any_mut().downcast_mut::<TasksList>()
-                                {
-                                    tasks_list.set_dimmed(matches!(self.focus, Focus::HelpPopup));
-                                    tasks_list.set_focus(self.focus);
-                                }
-                                let r = component.draw(f, f.area());
-                                if let Err(e) = r {
-                                    action_tx
-                                        .send(Action::Error(format!("Failed to draw: {:?}", e)))
-                                        .unwrap();
-                                }
-                            }
-                        })?;
-                    }
-                    _ => {}
-                }
-
-                for component in self.components.iter_mut() {
-                    if let Some(action) = component.update(action.clone())? {
-                        action_tx.send(action)?
-                    };
-                }
+                }).ok();
             }
-
-            if self.should_quit {
-                tui.stop()?;
-                break;
-            }
+            _ => {}
         }
 
-        tui.exit()?;
-        Ok(())
+        // Update components
+        for component in self.components.iter_mut() {
+            if let Ok(Some(new_action)) = component.update(action.clone()) {
+                action_tx.send(new_action).ok();
+            }
+        }
+    }
+
+    pub fn set_done_callback(&mut self, done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>) {
+        self.done_callback = Some(done_callback);
+    }
+
+    pub fn call_done_callback(&self) {
+        if let Some(cb) = &self.done_callback {
+            cb.call((), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+        }
     }
 
     pub fn focus(&self) -> Focus {

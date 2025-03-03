@@ -9,6 +9,7 @@ export declare class ExternalObject<T> {
 }
 export declare class AppLifeCycle {
   constructor(projectNames: Array<string>, tasks: Array<Task>, nxArgs: object, overrides: object)
+  init(doneCallback: () => any): void
   scheduleTask(task: Task): void
   startTasks(tasks: Array<Task>, metadata: object): void
   printTaskTerminalOutput(task: Task, status: string, output: string): void
@@ -140,8 +141,6 @@ export declare export function connectToNxDb(cacheDir: string, nxVersion: string
 
 export declare export function copy(src: string, dest: string): void
 
-export declare export function createExternalAppLifecycle(projectNames: Array<string>, tasks: Array<Task>, nxArgs: object, overrides: object): ExternalObject<AppLifeCycle>
-
 export interface DepsOutputsInput {
   dependentTasksOutputFiles: string
   transitive?: boolean
@@ -168,8 +167,6 @@ export interface ExternalNode {
   version: string
   hash?: string
 }
-
-export declare export function extractLifeCycleRef(appLifecycle: ExternalObject<AppLifeCycle>): AppLifeCycle
 
 export interface FileData {
   file: string
@@ -216,8 +213,6 @@ export interface HasherOptions {
 }
 
 export declare export function hashFile(file: string): string | null
-
-export declare export function initTerminal(appLifecycle: ExternalObject<AppLifeCycle>, doneCallback: () => any): void
 
 export interface InputsInput {
   input: string
