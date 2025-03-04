@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 use vt100_ctt::Parser;
+use crate::native::pseudo_terminal::pseudo_terminal::command_builder;
 
 #[derive(Clone)]
 pub struct PtyInstance {
@@ -21,14 +22,13 @@ impl PtyInstance {
         rows: u16,
         cols: u16,
         command: &str,
-        args: &[&str],
         cwd: Option<&str>,
         env: Option<&HashMap<String, String>>,
     ) -> io::Result<Self> {
         let pty_system = NativePtySystem::default();
 
-        let mut cmd = CommandBuilder::new(command);
-        cmd.args(args);
+        let mut cmd = command_builder();
+        cmd.arg(command);
 
         // Set working directory if provided, otherwise use current dir
         if let Some(dir) = cwd {
@@ -271,97 +271,5 @@ impl PtyInstance {
             *status = Some(exit_code);
         }
         Ok(())
-    }
-
-    pub fn new_with_output_and_command(
-        rows: u16,
-        cols: u16,
-        output: &[u8],
-        command: &str,
-        args: &[&str],
-    ) -> io::Result<Self> {
-        let pty_system = NativePtySystem::default();
-        let cwd = std::env::current_dir()?;
-
-        let mut cmd = CommandBuilder::new(command);
-        cmd.args(args);
-        cmd.cwd(cwd);
-
-        let pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-        // Create parser with initial output
-        let parser = Arc::new(RwLock::new(Parser::new(rows, cols, 10000)));
-        if let Ok(mut parser_guard) = parser.write() {
-            parser_guard.process(output);
-        }
-
-        let parser_clone = parser.clone();
-        let exit_status = Arc::new(Mutex::new(None));
-        let exit_status_clone = exit_status.clone();
-
-        let mut reader = pair.master.try_clone_reader().unwrap();
-        let raw_writer = pair.master.take_writer().unwrap();
-        let writer = Arc::new(Mutex::new(raw_writer));
-
-        std::thread::spawn(move || {
-            let mut child = pair.slave.spawn_command(cmd).unwrap();
-            let status = child.wait().unwrap();
-            *exit_status_clone.lock().unwrap() = Some(status.exit_code() as i32);
-            drop(pair.slave);
-        });
-
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 8192];
-            let mut processed_buf = Vec::new();
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(size) => {
-                        // Check if this buffer contains a clear screen sequence
-                        let contains_clear = buf[..size]
-                            .windows(4)
-                            .any(|window| window == [0x1B, 0x5B, 0x32, 0x4A]);
-
-                        if contains_clear {
-                            // If we detect a clear screen sequence, start fresh
-                            processed_buf.clear();
-                            processed_buf.extend_from_slice(&buf[..size]);
-
-                            let mut parser = parser_clone.write().unwrap();
-                            // Get current dimensions
-                            let (rows, cols) = parser.screen().size();
-                            // Create a fresh parser
-                            let mut new_parser = Parser::new(rows, cols, 10000);
-                            // Process just this buffer
-                            new_parser.process(&processed_buf);
-                            *parser = new_parser;
-                        } else {
-                            // Normal processing
-                            processed_buf.extend_from_slice(&buf[..size]);
-                            let mut parser = parser_clone.write().unwrap();
-                            parser.process(&processed_buf);
-                        }
-
-                        processed_buf.clear();
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-
-        Ok(Self {
-            parser,
-            writer: Some(writer),
-            rows,
-            cols,
-            exit_status,
-        })
     }
 }

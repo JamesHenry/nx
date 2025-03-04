@@ -3,7 +3,7 @@ use crate::native::tui::{
     app::Focus,
     components::Component,
     pty::PtyInstance,
-    task::{CommandLookup, Task, TaskResult},
+    task::{Task, TaskResult},
     utils,
 };
 use color_eyre::eyre::Result;
@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Padding, Paragraph, Row, ScrollbarState, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, ScrollbarState, Table},
     Frame,
 };
 use std::any::Any;
@@ -51,7 +51,6 @@ pub struct TasksList {
     is_dimmed: bool,
     spacebar_mode: bool, // Whether we're in spacebar mode (output follows selection)
     terminal_pane_data: [TerminalPaneData; 2],
-    command_lookup: CommandLookup,
     target_names: Vec<String>,
     task_list_hidden: bool, // New field to track if task list is hidden
 }
@@ -195,9 +194,8 @@ impl TaskItem {
         // }
     }
 
-    pub fn start_task(&mut self, command_lookup: &CommandLookup) -> io::Result<bool> {
+    pub fn start_task(&mut self) -> io::Result<bool> {
         if matches!(self.status, TaskStatus::NotStarted) {
-            let old_status = self.status;
             self.status = TaskStatus::InProgress;
 
             // Record start time in milliseconds
@@ -208,26 +206,8 @@ impl TaskItem {
                     .as_millis(),
             );
 
-            // Get terminal size
-            let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
-            let (width, height) = terminal_size;
-
-            // Calculate dimensions using the same logic as handle_resize
-            let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
-            let area = Rect::new(0, 0, output_width, height);
-
-            // Use TerminalPane to calculate dimensions
-            let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
-
             // Get command and args from lookup
-            if let Some((command, args)) = command_lookup.get(&self.name) {
-                let args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                let pty = PtyInstance::new(pty_height, pty_width, command, &args, None, None)?;
-                self.pty = Some(pty);
-                Ok(old_status != self.status)
-            } else {
-                Ok(false)
-            }
+            Ok(false)
         } else {
             Ok(false)
         }
@@ -320,7 +300,7 @@ impl TaskStatus {
 impl TasksList {
     /// Creates a new TasksList with the given tasks.
     /// Converts the input tasks into TaskItems and initializes the UI state.
-    pub fn new(tasks: Vec<Task>, target_names: Vec<String>, command_lookup: CommandLookup) -> Self {
+    pub fn new(tasks: Vec<Task>, target_names: Vec<String>) -> Self {
         let mut task_items = Vec::new();
 
         for task in tasks {
@@ -351,7 +331,6 @@ impl TasksList {
             is_dimmed: false,
             spacebar_mode: false,
             terminal_pane_data: [TerminalPaneData::new(), TerminalPaneData::new()],
-            command_lookup,
             target_names,
             task_list_hidden: false,
         }
@@ -865,7 +844,7 @@ impl TasksList {
             if let Some(task) = self.tasks.get_mut(task_idx) {
                 if matches!(task.status, TaskStatus::NotStarted) {
                     // Start the task with current UI dimensions
-                    match task.start_task(&self.command_lookup) {
+                    match task.start_task() {
                         Ok(_) => {
                             self.last_task_start = Some(now);
                             self.queued_tasks.remove(0);
@@ -1854,7 +1833,6 @@ impl Default for TasksList {
             is_dimmed: false,
             spacebar_mode: false,
             terminal_pane_data: [TerminalPaneData::default(), TerminalPaneData::default()],
-            command_lookup: CommandLookup::default(),
             target_names: Vec::new(),
             task_list_hidden: false,
         }

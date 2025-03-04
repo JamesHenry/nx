@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-
-pub type CommandLookup = HashMap<String, (String, Vec<String>)>;
-
 #[derive(Clone)]
 pub struct TaskTarget {
     pub project: String,

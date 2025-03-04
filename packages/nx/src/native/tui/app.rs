@@ -1,4 +1,4 @@
-use super::task::{CommandLookup, Task};
+use super::task::{Task};
 use super::{
     action::Action,
     components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
@@ -37,9 +37,8 @@ impl App {
         frame_rate: f64,
         tasks: Vec<Task>,
         target_names: Vec<String>,
-        command_lookup: CommandLookup,
     ) -> Result<Self> {
-        let tasks_list = TasksList::new(tasks, target_names, command_lookup);
+        let tasks_list = TasksList::new(tasks, target_names);
         let help_popup = HelpPopup::new();
 
         let components: Vec<Box<dyn Component>> = vec![Box::new(tasks_list), Box::new(help_popup)];

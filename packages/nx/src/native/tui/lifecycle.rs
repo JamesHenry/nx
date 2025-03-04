@@ -147,14 +147,7 @@ impl AppLifeCycle {
         // Create app with converted tasks and empty command lookup
         Self {
             app: std::sync::Arc::new(std::sync::Mutex::new(
-                app::App::new(
-                    10.0,
-                    60.0,
-                    internal_tasks,
-                    target_names,
-                    task::CommandLookup::default(),
-                )
-                .unwrap(),
+                app::App::new(10.0, 60.0, internal_tasks, target_names).unwrap(),
             )),
         }
     }
@@ -250,24 +243,17 @@ impl AppLifeCycle {
         // Use TerminalPane to calculate dimensions
         let (pty_height, pty_width) = terminal_pane::TerminalPane::calculate_pty_dimensions(area);
 
-        // We only care about the first command in the commands array on the rust side for now
-        // In the case that there are multiple commands, this function won't have been invoked
         let command = options
             .commands
             .first()
             .map(|c| c.command.as_str())
             .unwrap_or("");
 
-        // Execute using the shell so that resolution via PATH etc works correctly
-        let shell = "sh";
-        let shell_args = vec!["-c", &command];
-
         // Create a PTY instance with the command
         let pty = pty::PtyInstance::new(
             pty_height,
             pty_width,
-            shell,
-            &shell_args,
+            command,
             options.cwd.as_deref(), // Pass working directory if specified
             options.env.as_ref(),   // Pass environment variables if specified
         )
