@@ -39,18 +39,13 @@ pub struct TasksList {
     pub filter_mode: bool,
     filter_text: String,
     filter_persisted: bool, // Whether the filter is in a persisted state
-    focus: Focus,
     last_box_area: Rect,
     scroll_offset: usize,
     scrollbar_state: ScrollbarState,
     content_height: usize,
-    pane_tasks: [Option<String>; 2], // Tasks assigned to panes 1 and 2 (0-indexed)
-    focused_pane: Option<usize>,     // Currently focused pane (if any)
     last_task_start: Option<u128>,   // Timestamp of last task start
     queued_tasks: Vec<usize>,        // Indices of tasks queued to start
     is_dimmed: bool,
-    spacebar_mode: bool, // Whether we're in spacebar mode (output follows selection)
-    terminal_pane_data: [TerminalPaneData; 2],
     command_lookup: CommandLookup,
     target_names: Vec<String>,
     task_list_hidden: bool, // New field to track if task list is hidden
@@ -339,18 +334,13 @@ impl TasksList {
             filter_mode: false,
             filter_text: String::new(),
             filter_persisted: false,
-            focus: Focus::TaskList,
             last_box_area: Rect::default(),
             scroll_offset: 0,
             scrollbar_state: ScrollbarState::default(),
             content_height: 0,
-            pane_tasks: [None, None],
-            focused_pane: None,
             last_task_start: None,
             queued_tasks,
             is_dimmed: false,
-            spacebar_mode: false,
-            terminal_pane_data: [TerminalPaneData::new(), TerminalPaneData::new()],
             command_lookup,
             target_names,
             task_list_hidden: false,
@@ -361,13 +351,6 @@ impl TasksList {
     /// If in spacebar mode, updates the output pane to show the newly selected task.
     pub fn next(&mut self) {
         self.selection_manager.next();
-
-        // Only update pane 1 if we're in spacebar mode
-        if self.spacebar_mode {
-            if let Some(task_name) = self.selection_manager.get_selected_task_name() {
-                self.pane_tasks[0] = Some(task_name.clone());
-            }
-        }
         self.reset_scroll();
     }
 
@@ -375,25 +358,7 @@ impl TasksList {
     /// If in spacebar mode, updates the output pane to show the newly selected task.
     pub fn previous(&mut self) {
         self.selection_manager.previous();
-
-        // Only update pane 1 if we're in spacebar mode
-        if self.spacebar_mode {
-            if let Some(task_name) = self.selection_manager.get_selected_task_name() {
-                self.pane_tasks[0] = Some(task_name.clone());
-            }
-        }
         self.reset_scroll();
-    }
-
-    /// Updates the output pane visibility after a page change.
-    /// Only affects the display if in spacebar mode.
-    fn update_pane_visibility_after_page_change(&mut self) {
-        // Only update pane visibility if we're in spacebar mode
-        if self.spacebar_mode {
-            if let Some(task_name) = self.selection_manager.get_selected_task_name() {
-                self.pane_tasks[0] = Some(task_name.clone());
-            }
-        }
     }
 
     /// Moves to the next page of tasks.
@@ -403,7 +368,6 @@ impl TasksList {
             return;
         }
         self.selection_manager.next_page();
-        self.update_pane_visibility_after_page_change();
         self.reset_scroll();
     }
 
@@ -414,7 +378,6 @@ impl TasksList {
             return;
         }
         self.selection_manager.previous_page();
-        self.update_pane_visibility_after_page_change();
         self.reset_scroll();
     }
 
@@ -561,14 +524,6 @@ impl TasksList {
         }
     }
 
-    pub fn set_focus(&mut self, focus: Focus) {
-        self.focus = focus;
-        // Clear multi-output focus when returning to task list
-        if matches!(focus, Focus::TaskList) {
-            self.focused_pane = None;
-        }
-    }
-
     /// Scrolls the content up by one line if possible.
     pub fn scroll_up(&mut self) {
         if self.is_scrollable() && self.scroll_offset > 0 {
@@ -601,137 +556,20 @@ impl TasksList {
         self.scrollbar_state = self.scrollbar_state.position(0);
     }
 
-    /// Toggles the visibility of the output pane for the currently selected task.
-    /// In spacebar mode, the output follows the task selection.
-    pub fn toggle_output_visibility(&mut self) {
-        // Ensure task list is visible after every spacebar interaction
-        self.task_list_hidden = false;
-
-        if let Some(task_name) = self.selection_manager.get_selected_task_name() {
-            if self.has_visible_panes() {
-                // Always clear all panes when toggling with spacebar
-                self.clear_all_panes();
-                self.spacebar_mode = false;
-            } else {
-                // Show current task in pane 1 in spacebar mode
-                self.pane_tasks = [Some(task_name.clone()), None];
-                self.focused_pane = None;
-                self.spacebar_mode = true; // Enter spacebar mode
-            }
-        }
-    }
-
-    /// Checks if the current view has any visible output panes.
-    pub fn has_visible_panes(&self) -> bool {
-        self.pane_tasks.iter().any(|t| t.is_some())
+    pub fn get_selected_task_name(&self) -> Option<&String> {
+        self.selection_manager.get_selected_task_name()
     }
 
     /// Clears all output panes and resets their associated state.
     pub fn clear_all_panes(&mut self) {
-        self.pane_tasks = [None, None];
         self.focused_pane = None;
-        self.focus = Focus::TaskList;
-        self.spacebar_mode = false;
-    }
-
-    pub fn assign_current_task_to_pane(&mut self, pane_idx: usize) {
-        if let Some(task_name) = self.selection_manager.get_selected_task_name() {
-            // If we're in spacebar mode and this is pane 0, convert to pinned mode
-            if self.spacebar_mode && pane_idx == 0 {
-                self.spacebar_mode = false;
-                self.focused_pane = Some(0);
-                return;
-            }
-
-            // Check if the task is already pinned to the pane
-            if self.pane_tasks[pane_idx].as_deref() == Some(task_name.as_str()) {
-                // Unpin the task if it's already pinned
-                self.pane_tasks[pane_idx] = None;
-
-                // Adjust focused pane if necessary
-                if !self.has_visible_panes() {
-                    self.focused_pane = None;
-                    self.focus = Focus::TaskList;
-                    self.spacebar_mode = false;
-                }
-                return;
-            }
-
-            // Pin the task to the specified pane
-            self.pane_tasks[pane_idx] = Some(task_name.clone());
-            self.focused_pane = Some(pane_idx);
-            self.focus = Focus::TaskList;
-            self.spacebar_mode = false; // Exit spacebar mode when pinning
-        }
-    }
-
-    pub fn focus_next(&mut self) {
-        let num_panes = self.pane_tasks.iter().filter(|t| t.is_some()).count();
-        if num_panes == 0 {
-            return; // No panes to focus
-        }
-
-        self.focus = match self.focus {
-            Focus::TaskList => {
-                // Move to first visible pane
-                if let Some(first_pane) = self.pane_tasks.iter().position(|t| t.is_some()) {
-                    Focus::MultipleOutput(first_pane)
-                } else {
-                    Focus::TaskList
-                }
-            }
-            Focus::MultipleOutput(current_pane) => {
-                // Find next visible pane or go back to task list
-                let next_pane = (current_pane + 1..2).find(|&idx| self.pane_tasks[idx].is_some());
-
-                match next_pane {
-                    Some(pane) => Focus::MultipleOutput(pane),
-                    None => Focus::TaskList,
-                }
-            }
-            Focus::HelpPopup => Focus::TaskList,
-        };
-    }
-
-    pub fn focus_previous(&mut self) {
-        let num_panes = self.pane_tasks.iter().filter(|t| t.is_some()).count();
-        if num_panes == 0 {
-            return; // No panes to focus
-        }
-
-        self.focus = match self.focus {
-            Focus::TaskList => {
-                // Move to last visible pane
-                if let Some(last_pane) = (0..2).rev().find(|&idx| self.pane_tasks[idx].is_some()) {
-                    Focus::MultipleOutput(last_pane)
-                } else {
-                    Focus::TaskList
-                }
-            }
-            Focus::MultipleOutput(current_pane) => {
-                // Find previous visible pane or go back to task list
-                if current_pane > 0 {
-                    if let Some(prev_pane) = (0..current_pane)
-                        .rev()
-                        .find(|&idx| self.pane_tasks[idx].is_some())
-                    {
-                        Focus::MultipleOutput(prev_pane)
-                    } else {
-                        Focus::TaskList
-                    }
-                } else {
-                    Focus::TaskList
-                }
-            }
-            Focus::HelpPopup => Focus::TaskList,
-        };
     }
 
     /// Gets the table style based on the current focus state.
     /// Returns a dimmed style when focus is not on the task list.
     fn get_table_style(&self) -> Style {
         match self.focus {
-            Focus::MultipleOutput(_) | Focus::HelpPopup => Style::default().dim(),
+            Focus::TerminalPane(_) | Focus::HelpPopup => Style::default().dim(),
             Focus::TaskList => Style::default(),
         }
     }
@@ -739,24 +577,6 @@ impl TasksList {
     /// Gets the current focus state of the component.
     pub fn get_focus(&self) -> Focus {
         self.focus
-    }
-
-    /// Forward key events to the currently focused pane, if any.
-    pub fn handle_key_event(&mut self, key: KeyEvent) -> io::Result<()> {
-        if let Focus::MultipleOutput(pane_idx) = self.focus {
-            let terminal_pane_data = &mut self.terminal_pane_data[pane_idx];
-            terminal_pane_data.handle_key_event(key)
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Returns true if the currently focused pane is in interactive mode.
-    pub fn is_interactive_mode(&self) -> bool {
-        match self.focus {
-            Focus::MultipleOutput(pane_idx) => self.terminal_pane_data[pane_idx].is_interactive(),
-            _ => false,
-        }
     }
 
     /// Handles window resize events by updating PTY dimensions.
@@ -906,7 +726,7 @@ impl TasksList {
     /// Creates header cells for the task list table.
     /// Shows either filter input or task status based on current state.
     fn get_header_cells(&self, collapsed_mode: bool) -> Vec<Cell> {
-        let should_dim = matches!(self.focus, Focus::MultipleOutput(_));
+        let should_dim = matches!(self.focus, Focus::TerminalPane(_));
         let status_style = if should_dim {
             Style::default().fg(Color::DarkGray).dim()
         } else {
@@ -1135,12 +955,12 @@ impl TasksList {
             .and_then(|t| t.pty.as_ref())
     }
 
-    /// Toggles the visibility of the task list panel
-    pub fn toggle_task_list(&mut self) {
-        // Only allow hiding if at least one pane is visible
-        if self.has_visible_panes() {
-            self.task_list_hidden = !self.task_list_hidden;
-        }
+    pub fn toggle(&mut self) {
+        self.task_list_hidden = !self.task_list_hidden;
+    }
+
+    pub fn hide(&mut self) {
+        self.task_list_hidden = true;
     }
 }
 
@@ -1222,7 +1042,7 @@ impl Component for TasksList {
                 .split(title_area);
 
             let title_style = if self.is_dimmed
-                || matches!(self.focus, Focus::MultipleOutput(_) | Focus::HelpPopup)
+                || matches!(self.focus, Focus::TerminalPane(_) | Focus::HelpPopup)
             {
                 Style::default().add_modifier(Modifier::DIM)
             } else {
@@ -1570,7 +1390,7 @@ impl Component for TasksList {
             };
 
             // Determine if bottom bar elements should be dimmed
-            let should_dim = matches!(self.focus, Focus::MultipleOutput(_));
+            let should_dim = matches!(self.focus, Focus::TerminalPane(_));
 
             // Pagination (always shown)
             let total_pages = self.selection_manager.total_pages();
@@ -1647,7 +1467,7 @@ impl Component for TasksList {
                                 }
 
                                 let is_focused = match self.focus {
-                                    Focus::MultipleOutput(focused_pane_idx) => {
+                                    Focus::TerminalPane(focused_pane_idx) => {
                                         1 == focused_pane_idx
                                     }
                                     _ => false,
@@ -1683,7 +1503,7 @@ impl Component for TasksList {
                             }
 
                             let is_focused = match self.focus {
-                                Focus::MultipleOutput(focused_pane_idx) => 0 == focused_pane_idx,
+                                Focus::TerminalPane(focused_pane_idx) => 0 == focused_pane_idx,
                                 _ => false,
                             };
                             let mut state = TerminalPaneState::default();
@@ -1718,7 +1538,7 @@ impl Component for TasksList {
                                 }
 
                                 let is_focused = match self.focus {
-                                    Focus::MultipleOutput(focused_pane_idx) => {
+                                    Focus::TerminalPane(focused_pane_idx) => {
                                         pane_idx == focused_pane_idx
                                     }
                                     _ => false,

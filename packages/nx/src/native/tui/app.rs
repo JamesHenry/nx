@@ -4,6 +4,8 @@ use super::{
     components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
     tui,
 };
+use crate::native::tui::components::terminal_pane::TerminalPaneData;
+use crate::native::tui::tui::Tui;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
@@ -12,10 +14,10 @@ use ratatui::style::Modifier;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use std::io;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
-use crate::native::tui::tui::Tui;
 
 pub struct App {
     pub tick_rate: f64,
@@ -26,12 +28,15 @@ pub struct App {
     focus: Focus,
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
+    terminal_pane_data: [TerminalPaneData; 2],
+    pane_tasks: [Option<String>; 2], // Tasks assigned to panes 1 and 2 (0-indexed)
+    spacebar_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     TaskList,
-    MultipleOutput(usize),
+    TerminalPane(usize),
     HelpPopup,
 }
 
@@ -52,11 +57,14 @@ impl App {
             tick_rate,
             frame_rate,
             components,
+            done_callback: None,
             should_quit: false,
             last_tick_key_events: Vec::new(),
             focus: Focus::TaskList,
             previous_focus: Focus::TaskList,
-            done_callback: None,
+            terminal_pane_data: [TerminalPaneData::new(), TerminalPaneData::new()],
+            pane_tasks: [None, None],
+            spacebar_mode: false,
         })
     }
 
@@ -92,30 +100,50 @@ impl App {
                     return Ok(true);
                 }
 
-                // Get tasks list component to check interactive mode before handling '?' key
-                if let Some(tasks_list) = self
-                    .components
-                    .iter_mut()
-                    .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-                {
-                    // Only handle '?' key if we're not in interactive mode
-                    if matches!(key.code, KeyCode::Char('?')) && !tasks_list.is_interactive_mode() {
-                        let show_help_popup = !matches!(self.focus, Focus::HelpPopup);
-                        if let Some(help_popup) = self
-                            .components
-                            .iter_mut()
-                            .find_map(|c| c.as_any_mut().downcast_mut::<HelpPopup>())
-                        {
-                            help_popup.set_visible(show_help_popup);
+                if let Focus::TerminalPane(pane_idx) = self.focus {
+                    if !self.is_interactive_mode() {
+                        match key.code {
+                            KeyCode::Tab => {
+                                self.focus_next();
+                            }
+                            KeyCode::BackTab => {
+                                self.focus_previous();
+                            }
+                            KeyCode::Char('b') => {
+                                self.toggle_task_list();
+                            }
+                            _ => {
+                                let terminal_pane_data = &mut self.terminal_pane_data[pane_idx];
+                                // Forward other keys for interactivity, scrolling (j/k) etc
+                                terminal_pane_data.handle_key_event(key).ok();
+                            }
                         }
-                        if show_help_popup {
-                            self.previous_focus = self.focus;
-                            self.focus = Focus::HelpPopup;
-                        } else {
-                            self.focus = self.previous_focus;
-                        }
-                        return Ok(false);
+                    } else {
+                        let terminal_pane_data = &mut self.terminal_pane_data[pane_idx];
+                        // Forward all key events to the currently focused pane in interactive mode
+                        terminal_pane_data.handle_key_event(key)?;
                     }
+
+                    return Ok(false);
+                };
+
+                // Only handle '?' key if we're not in interactive mode
+                if matches!(key.code, KeyCode::Char('?')) && !self.is_interactive_mode() {
+                    let show_help_popup = !matches!(self.focus, Focus::HelpPopup);
+                    if let Some(help_popup) = self
+                        .components
+                        .iter_mut()
+                        .find_map(|c| c.as_any_mut().downcast_mut::<HelpPopup>())
+                    {
+                        help_popup.set_visible(show_help_popup);
+                    }
+                    if show_help_popup {
+                        self.previous_focus = self.focus;
+                        self.focus = Focus::HelpPopup;
+                    } else {
+                        self.focus = self.previous_focus;
+                    }
+                    return Ok(false);
                 }
 
                 // If shortcuts popup is open, handle its keyboard events
@@ -156,275 +184,107 @@ impl App {
                     return Ok(false);
                 }
 
-                // Get tasks list component for handling key events
-                if let Some(tasks_list) = self
-                    .components
-                    .iter_mut()
-                    .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-                {
-                    // Handle Up/Down keys for scrolling first
-                    if matches!(tasks_list.get_focus(), Focus::MultipleOutput(_)) {
-                        match key.code {
-                            KeyCode::Up | KeyCode::Down => {
-                                tasks_list.handle_key_event(key).ok();
-                                return Ok(false);
-                            }
-                            KeyCode::Char('k') | KeyCode::Char('j')
-                                if !tasks_list.is_interactive_mode() =>
-                            {
-                                tasks_list.handle_key_event(key).ok();
-                                return Ok(false);
-                            }
-                            _ => {}
+                // Handle spacebar toggle regardless of focus
+                if key.code == KeyCode::Char(' ') {
+                    self.toggle_output_visibility();
+                    return Ok(false); // Skip other key handling
+                }
+
+                if matches!(self.focus, Focus::TaskList) {
+
+                    let mut tasks_list = self.get_tasks_list_mut();
+                    match key.code {
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            tasks_list.next();
                         }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            tasks_list.previous();
+                        }
+                        KeyCode::Left => {
+                            tasks_list.previous_page();
+                        }
+                        KeyCode::Right => {
+                            tasks_list.next_page();
+                        }
+                        KeyCode::Esc => {
+                            tasks_list.clear_filter();
+                        }
+                        KeyCode::Char(c) if tasks_list.filter_mode => {
+                            tasks_list.add_filter_char(c);
+                        }
+                        KeyCode::Backspace if tasks_list.filter_mode => {
+                            tasks_list.remove_filter_char();
+                        }
+                        KeyCode::Char('/') => {
+                            if tasks_list.filter_mode {
+                                // Pretty sure this is unreachable
+                                // Could be a bug where '/' will add a char instead of exit filter mode... which may be a feature?
+                                tasks_list.exit_filter_mode();
+                            } else {
+                                tasks_list.enter_filter_mode();
+                            }
+                        }
+                        KeyCode::Char('h') => {
+                            tasks_list.previous_page();
+                        }
+                        KeyCode::Char('l') => {
+                            tasks_list.next_page();
+                        }
+                        KeyCode::Char('b') => {
+                            self.toggle_task_list();
+                        }
+                        KeyCode::Char('q') => {
+                            self.should_quit = true;
+                        }
+                        KeyCode::Char('0') => {
+                            self.clear_all_panes();
+                        }
+                        KeyCode::Char('1') => {
+                            self.assign_current_task_to_pane(0);
+                        }
+                        KeyCode::Char('2') => {
+                            self.assign_current_task_to_pane(1);
+                        }
+                        _ => {}
                     }
 
-                    match tasks_list.get_focus() {
-                        Focus::MultipleOutput(_) => {
-                            if tasks_list.is_interactive_mode() {
-                                // Send all other keys to the task list (and ultimately through the terminal pane to the PTY)
-                                tasks_list.handle_key_event(key).ok();
-                            } else {
-                                // Handle navigation and special actions
-                                match key.code {
-                                    KeyCode::Tab => {
-                                        tasks_list.focus_next();
-                                        self.focus = tasks_list.get_focus();
-                                    }
-                                    KeyCode::BackTab => {
-                                        tasks_list.focus_previous();
-                                        self.focus = tasks_list.get_focus();
-                                    }
-                                    // Add our new shortcuts here
-                                    KeyCode::Char('c') => {
-                                        tasks_list.handle_key_event(key).ok();
-                                    }
-                                    KeyCode::Char('u') | KeyCode::Char('d')
-                                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                    {
-                                        tasks_list.handle_key_event(key).ok();
-                                    }
-                                    KeyCode::Char('b') => {
-                                        tasks_list.toggle_task_list();
-                                    }
-                                    _ => {
-                                        // Forward other keys for interactivity, scrolling (j/k) etc
-                                        tasks_list.handle_key_event(key).ok();
-                                    }
-                                }
-                            }
-                            return Ok(false);
-                        }
-                        _ => {
-                            // Handle spacebar toggle regardless of focus
-                            if key.code == KeyCode::Char(' ') {
-                                if let Some(tasks_list) = self
-                                    .components
-                                    .iter_mut()
-                                    .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-                                {
-                                    tasks_list.toggle_output_visibility();
-                                }
-                                return Ok(false); // Skip other key handling
-                            }
-
-                            match self.focus {
-                                Focus::TaskList => match key.code {
-                                    KeyCode::Down | KeyCode::Char('j') => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.next();
-                                        }
-                                    }
-                                    KeyCode::Up | KeyCode::Char('k') => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.previous();
-                                        }
-                                    }
-                                    KeyCode::Left => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.previous_page();
-                                        }
-                                    }
-                                    KeyCode::Right => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.next_page();
-                                        }
-                                    }
-                                    KeyCode::Esc => {
-                                        if matches!(self.focus, Focus::HelpPopup) {
-                                            if let Some(help_popup) =
-                                                self.components.iter_mut().find_map(|c| {
-                                                    c.as_any_mut().downcast_mut::<HelpPopup>()
-                                                })
-                                            {
-                                                help_popup.set_visible(false);
-                                            }
-                                            self.focus = self.previous_focus;
-                                        } else {
-                                            // Only clear filter when help popup is not in focus
-                                            if let Some(tasks_list) =
-                                                self.components.iter_mut().find_map(|c| {
-                                                    c.as_any_mut().downcast_mut::<TasksList>()
-                                                })
-                                            {
-                                                tasks_list.clear_filter();
-                                            }
-                                        }
-                                    }
-                                    KeyCode::Char(c) => {
-                                        if tasks_list.filter_mode {
-                                            tasks_list.add_filter_char(c);
-                                        } else {
-                                            match c {
-                                                '/' => {
-                                                    if tasks_list.filter_mode {
-                                                        tasks_list.exit_filter_mode();
-                                                    } else {
-                                                        tasks_list.enter_filter_mode();
-                                                    }
-                                                }
-                                                c => {
-                                                    if tasks_list.filter_mode {
-                                                        tasks_list.add_filter_char(c);
-                                                    } else {
-                                                        match c {
-                                                            'j' => tasks_list.next(),
-                                                            'k' => tasks_list.previous(),
-                                                            '1' => tasks_list
-                                                                .assign_current_task_to_pane(0),
-                                                            '2' => tasks_list
-                                                                .assign_current_task_to_pane(1),
-                                                            '0' => tasks_list.clear_all_panes(),
-                                                            'h' => tasks_list.previous_page(),
-                                                            'l' => tasks_list.next_page(),
-                                                            'b' => tasks_list.toggle_task_list(),
-                                                            'q' => self.should_quit = true,
-                                                            _ => {}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    KeyCode::Backspace => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.filter_mode {
-                                                tasks_list.remove_filter_char();
-                                            }
-                                        }
-                                    }
-                                    KeyCode::Tab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.has_visible_panes() {
-                                                tasks_list.focus_next();
-                                                self.focus = tasks_list.get_focus();
-                                            }
-                                        }
-                                    }
-                                    KeyCode::BackTab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.has_visible_panes() {
-                                                tasks_list.focus_previous();
-                                                self.focus = tasks_list.get_focus();
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                },
-                                Focus::MultipleOutput(_idx) => match key.code {
-                                    KeyCode::Tab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.focus_next();
-                                            self.focus = tasks_list.get_focus();
-                                        }
-                                    }
-                                    KeyCode::BackTab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.focus_previous();
-                                            self.focus = tasks_list.get_focus();
-                                        }
-                                    }
-                                    _ => {}
-                                },
-                                Focus::HelpPopup => {
-                                    // Shortcuts popup has its own key handling above
-                                }
-                            }
+                    if self.spacebar_mode {
+                        let tasks_list = self.get_tasks_list();
+                        if let Some(task_name) = tasks_list.get_selected_task_name() {
+                            self.pane_tasks[0] = Some(task_name.clone());
                         }
                     }
                 }
             }
-            tui::Event::Mouse(mouse) => {
-                if let Some(tasks_list) = self
-                    .components
-                    .iter_mut()
-                    .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-                {
-                    match mouse.kind {
+            tui::Event::Mouse(mouse_event) => match self.focus {
+                Focus::TerminalPane(pane_idx) => match mouse_event.kind {
+                    MouseEventKind::ScrollUp => {
+                        self.terminal_pane_data[pane_idx]
+                            .handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()))
+                            .ok();
+                    }
+                    MouseEventKind::ScrollDown => {
+                        self.terminal_pane_data[pane_idx]
+                            .handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()))
+                            .ok();
+                    }
+                    _ => {}
+                },
+                Focus::TaskList => {
+                    let tasks_list = self.get_tasks_list_mut();
+
+                    match mouse_event.kind {
                         MouseEventKind::ScrollUp => {
-                            if matches!(tasks_list.get_focus(), Focus::MultipleOutput(_)) {
-                                tasks_list
-                                    .handle_key_event(KeyEvent::new(
-                                        KeyCode::Up,
-                                        KeyModifiers::empty(),
-                                    ))
-                                    .ok();
-                            } else if matches!(tasks_list.get_focus(), Focus::TaskList) {
-                                tasks_list.previous();
-                            }
+                            tasks_list.previous();
                         }
                         MouseEventKind::ScrollDown => {
-                            if matches!(tasks_list.get_focus(), Focus::MultipleOutput(_)) {
-                                tasks_list
-                                    .handle_key_event(KeyEvent::new(
-                                        KeyCode::Down,
-                                        KeyModifiers::empty(),
-                                    ))
-                                    .ok();
-                            } else if matches!(tasks_list.get_focus(), Focus::TaskList) {
-                                tasks_list.next();
-                            }
+                            tasks_list.next();
                         }
                         _ => {}
                     }
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
 
@@ -437,7 +297,12 @@ impl App {
         Ok(false)
     }
 
-    pub fn handle_action(&mut self, tui: &mut Tui, action: Action, action_tx: &UnboundedSender<Action>) {
+    pub fn handle_action(
+        &mut self,
+        tui: &mut Tui,
+        action: Action,
+        action_tx: &UnboundedSender<Action>,
+    ) {
         if action != Action::Tick && action != Action::Render {
             log::debug!("{action:?}");
         }
@@ -471,72 +336,67 @@ impl App {
                         let r = component.draw(f, f.area());
                         if let Err(e) = r {
                             action_tx
-                                .send(Action::Error(format!(
-                                    "Failed to draw: {:?}",
-                                    e
-                                )))
-                                .ok();
-                        }
-                    }
-                })
-                    .ok();
-            }
-            Action::Render => {
-                tui.draw(|f| {
-                    let area = f.area();
-
-                    // Check for minimum viable viewport size at the app level
-                    if area.height < 12 || area.width < 40 {
-                        let message = Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled(
-                                " NX ",
-                                Style::reset()
-                                    .add_modifier(Modifier::BOLD)
-                                    .bg(Color::Red)
-                                    .fg(Color::Black),
-                            ),
-                            Span::raw("  "),
-                            Span::raw("Please make your terminal viewport larger in order to view the tasks UI"),
-                        ]);
-
-                        // Create empty lines for vertical centering
-                        let empty_line = Line::from("");
-                        let mut lines = vec![];
-
-                        // Add empty lines to center vertically
-                        let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
-                        for _ in 0..vertical_padding {
-                            lines.push(empty_line.clone());
-                        }
-
-                        // Add the message
-                        lines.push(message);
-
-                        let paragraph = Paragraph::new(lines)
-                            .alignment(Alignment::Center);
-                        f.render_widget(paragraph, area);
-                        return;
-                    }
-
-                    // Only render components if viewport is large enough
-                    // Draw main components with dimming if popup is focused
-                    let current_focus = self.focus();
-                    for component in self.components.iter_mut() {
-                        if let Some(tasks_list) =
-                            component.as_any_mut().downcast_mut::<TasksList>()
-                        {
-                            tasks_list.set_dimmed(matches!(current_focus, Focus::HelpPopup));
-                            tasks_list.set_focus(current_focus);
-                        }
-                        let r = component.draw(f, f.area());
-                        if let Err(e) = r {
-                            action_tx
                                 .send(Action::Error(format!("Failed to draw: {:?}", e)))
                                 .ok();
                         }
                     }
-                }).ok();
+                })
+                .ok();
+            }
+            Action::Render => {
+                tui.draw(|f| {
+                let area = f.area();
+
+                // Check for minimum viable viewport size at the app level
+                if area.height < 12 || area.width < 40 {
+                    let message = Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            " NX ",
+                            Style::reset()
+                                .add_modifier(Modifier::BOLD)
+                                .bg(Color::Red)
+                                .fg(Color::Black),
+                        ),
+                        Span::raw("  "),
+                        Span::raw("Please make your terminal viewport larger in order to view the tasks UI"),
+                    ]);
+
+                    // Create empty lines for vertical centering
+                    let empty_line = Line::from("");
+                    let mut lines = vec![];
+
+                    // Add empty lines to center vertically
+                    let vertical_padding = (area.height as usize).saturating_sub(3) / 2;
+                    for _ in 0..vertical_padding {
+                        lines.push(empty_line.clone());
+                    }
+
+                    // Add the message
+                    lines.push(message);
+
+                    let paragraph = Paragraph::new(lines)
+                        .alignment(Alignment::Center);
+                    f.render_widget(paragraph, area);
+                    return;
+                }
+
+                // Only render components if viewport is large enough
+                // Draw main components with dimming if popup is focused
+                for component in self.components.iter_mut() {
+                    if let Some(tasks_list) =
+                        component.as_any_mut().downcast_mut::<TasksList>()
+                    {
+                        tasks_list.set_dimmed(matches!(self.focus, Focus::HelpPopup));
+                    }
+                    let r = component.draw(f, f.area());
+                    if let Err(e) = r {
+                        action_tx
+                            .send(Action::Error(format!("Failed to draw: {:?}", e)))
+                            .ok();
+                    }
+                }
+            }).ok();
             }
             _ => {}
         }
@@ -549,17 +409,191 @@ impl App {
         }
     }
 
-    pub fn set_done_callback(&mut self, done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>) {
+    pub fn set_done_callback(
+        &mut self,
+        done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+    ) {
         self.done_callback = Some(done_callback);
     }
 
     pub fn call_done_callback(&self) {
         if let Some(cb) = &self.done_callback {
-            cb.call((), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+            cb.call(
+                (),
+                napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking,
+            );
+        }
+    }
+
+    pub fn is_interactive_mode(&self) -> bool {
+        match self.focus {
+            Focus::TerminalPane(pane_idx) => self.terminal_pane_data[pane_idx].is_interactive(),
+            _ => false,
         }
     }
 
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    pub fn focus_next(&mut self) {
+        let num_panes = self.pane_tasks.iter().filter(|t| t.is_some()).count();
+        if num_panes == 0 {
+            return; // No panes to focus
+        }
+
+        self.focus = match self.focus {
+            Focus::TaskList => {
+                // Move to first visible pane
+                if let Some(first_pane) = self.pane_tasks.iter().position(|t| t.is_some()) {
+                    Focus::TerminalPane(first_pane)
+                } else {
+                    Focus::TaskList
+                }
+            }
+            Focus::TerminalPane(current_pane) => {
+                // Find next visible pane or go back to task list
+                let next_pane = (current_pane + 1..2).find(|&idx| self.pane_tasks[idx].is_some());
+
+                match next_pane {
+                    Some(pane) => Focus::TerminalPane(pane),
+                    None => Focus::TaskList,
+                }
+            }
+            Focus::HelpPopup => Focus::TaskList,
+        };
+    }
+
+    pub fn focus_previous(&mut self) {
+        let num_panes = self.pane_tasks.iter().filter(|t| t.is_some()).count();
+        if num_panes == 0 {
+            return; // No panes to focus
+        }
+
+        self.focus = match self.focus {
+            Focus::TaskList => {
+                // Move to last visible pane
+                if let Some(last_pane) = (0..2).rev().find(|&idx| self.pane_tasks[idx].is_some()) {
+                    Focus::TerminalPane(last_pane)
+                } else {
+                    Focus::TaskList
+                }
+            }
+            Focus::TerminalPane(current_pane) => {
+                // Find previous visible pane or go back to task list
+                if current_pane > 0 {
+                    if let Some(prev_pane) = (0..current_pane)
+                        .rev()
+                        .find(|&idx| self.pane_tasks[idx].is_some())
+                    {
+                        Focus::TerminalPane(prev_pane)
+                    } else {
+                        Focus::TaskList
+                    }
+                } else {
+                    Focus::TaskList
+                }
+            }
+            Focus::HelpPopup => Focus::TaskList,
+        };
+    }
+
+    /// Checks if the current view has any visible output panes.
+    pub fn has_visible_panes(&self) -> bool {
+        self.pane_tasks.iter().any(|t| t.is_some())
+    }
+
+    /// Moves the selection to the next task in the list.
+    /// If in spacebar mode, updates the output pane to show the newly selected task.
+    fn next_task(&mut self, tasks_list: &mut TasksList) {
+        tasks_list.next();
+
+        // Only update pane 1 if we're in spacebar mode
+        if self.spacebar_mode {
+            if let Some(task_name) = tasks_list.get_selected_task_name() {
+                self.pane_tasks[0] = Some(task_name.clone());
+            }
+        }
+        tasks_list.reset_scroll();
+    }
+
+    fn assign_current_task_to_pane(&mut self, pane_idx: usize) {
+        let tasks_list = self.get_tasks_list();
+        if let Some(task_name) = tasks_list.get_selected_task_name() {
+            // If we're in spacebar mode and this is pane 0, convert to pinned mode
+            if self.spacebar_mode && pane_idx == 0 {
+                self.spacebar_mode = false;
+                self.focus = Focus::TerminalPane(pane_idx);
+                return;
+            }
+
+            // Check if the task is already pinned to the pane
+            if self.pane_tasks[pane_idx].as_deref() == Some(task_name.as_str()) {
+                // Unpin the task if it's already pinned
+                self.pane_tasks[pane_idx] = None;
+
+                // Adjust focused pane if necessary
+                if !self.has_visible_panes() {
+                    self.focus = Focus::TaskList;
+                    self.spacebar_mode = false;
+                }
+                return;
+            }
+
+            // Pin the task to the specified pane
+            self.pane_tasks[pane_idx] = Some(task_name.clone());
+            self.focus = Focus::TaskList;
+            self.spacebar_mode = false; // Exit spacebar mode when pinning
+        }
+    }
+
+    fn clear_all_panes(&mut self) {
+        self.pane_tasks = [None, None];
+        self.spacebar_mode = false;
+        self.focus = Focus::TaskList;
+    }
+
+    /// Toggles the visibility of the output pane for the currently selected task.
+    /// In spacebar mode, the output follows the task selection.
+    pub fn toggle_output_visibility(&mut self) {
+        let has_visible_panes = self.has_visible_panes();
+        let tasks_list = self.get_tasks_list_mut();
+        // Ensure task list is visible after every spacebar interaction
+        tasks_list.hide();
+
+        if let Some(task_name) = tasks_list.get_selected_task_name() {
+            if has_visible_panes {
+                // Always clear all panes when toggling with spacebar
+                self.clear_all_panes();
+                self.spacebar_mode = false;
+            } else {
+                // Show current task in pane 1 in spacebar mode
+                self.pane_tasks = [Some(task_name.clone()), None];
+                self.spacebar_mode = true; // Enter spacebar mode
+            }
+        }
+    }
+
+    /// Toggles the visibility of the task list panel
+    fn toggle_task_list(&mut self) {
+        // Only allow hiding if at least one pane is visible
+        if self.has_visible_panes() {
+            let tasks_list = self.get_tasks_list_mut();
+            tasks_list.toggle();
+        }
+    }
+
+    fn get_tasks_list(&self) -> &TasksList {
+        self.components
+            .iter()
+            .find_map(|c| c.as_any().downcast_ref::<TasksList>())
+            .expect("TasksList component does not exist")
+    }
+
+    fn get_tasks_list_mut(&mut self) -> &mut TasksList {
+        self.components
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
+            .expect("TasksList component does not exist")
     }
 }
