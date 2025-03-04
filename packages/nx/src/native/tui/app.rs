@@ -4,17 +4,18 @@ use super::{
     components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
     tui,
 };
-use crate::native::tui::components::terminal_pane::TerminalPaneData;
+use crate::native::tui::components::terminal_pane::{TerminalPane, TerminalPaneData, TerminalPaneState};
 use crate::native::tui::tui::Tui;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::Modifier;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Paragraph};
 use std::io;
+use ratatui::Frame;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
@@ -595,5 +596,151 @@ impl App {
             .iter_mut()
             .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
             .expect("TasksList component does not exist")
+    }
+
+    pub fn draw_terminal_panes(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+
+        let num_active_panes = self.pane_tasks.iter().filter(|t| t.is_some()).count();
+
+        match num_active_panes {
+            0 => (), // No panes to render
+            1 => {
+                if self.pane_tasks[1].is_some() {
+                    let output_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .spacing(2)
+                        .split(output_area);
+
+                    // Render placeholder for pane 1
+                    let placeholder = Paragraph::new("Press 1 on a task to show it here")
+                        .block(
+                            Block::default()
+                                .title("  Output 1  ")
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(Color::DarkGray)),
+                        )
+                        .style(Style::default().fg(Color::DarkGray))
+                        .alignment(Alignment::Center);
+
+                    f.render_widget(placeholder, output_chunks[0]);
+
+                    // Get task data before rendering
+                    if let Some(task_name) = &self.pane_tasks[1] {
+                        if let Some(task) = self.tasks.iter_mut().find(|t| t.name == *task_name)
+                        {
+                            let mut terminal_pane_data = &mut self.terminal_pane_data[1];
+                            terminal_pane_data.status = task.status;
+                            terminal_pane_data.is_continuous = task.continuous;
+
+                            if let Some(pty) = &mut task.pty {
+                                terminal_pane_data.pty = Some(pty.clone());
+                            }
+
+                            let is_focused = match self.focus {
+                                Focus::TerminalPane(focused_pane_idx) => {
+                                    1 == focused_pane_idx
+                                }
+                                _ => false,
+                            };
+                            let mut state = TerminalPaneState::default();
+
+                            let terminal_pane = TerminalPane::new()
+                                .task_name(task.name.clone())
+                                .pty_data(&mut terminal_pane_data)
+                                .focused(is_focused)
+                                .continuous(task.continuous);
+
+                            f.render_stateful_widget(
+                                terminal_pane,
+                                output_chunks[1],
+                                &mut state,
+                            );
+                        }
+                    }
+                } else if let Some((pane_idx, Some(task_name))) = self
+                    .pane_tasks
+                    .iter()
+                    .enumerate()
+                    .find(|(_, t)| t.is_some())
+                {
+                    if let Some(task) = self.tasks.iter_mut().find(|t| t.name == *task_name) {
+                        let mut terminal_pane_data = &mut self.terminal_pane_data[pane_idx];
+                        terminal_pane_data.status = task.status;
+                        terminal_pane_data.is_continuous = task.continuous;
+
+                        if let Some(pty) = &mut task.pty {
+                            terminal_pane_data.pty = Some(pty.clone());
+                        }
+
+                        let is_focused = match self.focus {
+                            Focus::TerminalPane(focused_pane_idx) => 0 == focused_pane_idx,
+                            _ => false,
+                        };
+                        let mut state = TerminalPaneState::default();
+
+                        let terminal_pane = TerminalPane::new()
+                            .task_name(task.name.clone())
+                            .pty_data(&mut terminal_pane_data)
+                            .focused(is_focused)
+                            .continuous(task.continuous);
+
+                        f.render_stateful_widget(terminal_pane, output_area, &mut state);
+                    }
+                }
+            }
+            _ => {
+                let output_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .spacing(2)
+                    .split(output_area);
+
+                for (pane_idx, chunk) in output_chunks.iter().enumerate() {
+                    if let Some(task_name) = &self.pane_tasks[pane_idx] {
+                        if let Some(task) = self.tasks.iter_mut().find(|t| t.name == *task_name)
+                        {
+                            let mut terminal_pane_data = &mut self.terminal_pane_data[pane_idx];
+                            terminal_pane_data.status = task.status;
+                            terminal_pane_data.is_continuous = task.continuous;
+
+                            if let Some(pty) = &mut task.pty {
+                                terminal_pane_data.pty = Some(pty.clone());
+                            }
+
+                            let is_focused = match self.focus {
+                                Focus::TerminalPane(focused_pane_idx) => {
+                                    pane_idx == focused_pane_idx
+                                }
+                                _ => false,
+                            };
+                            let mut state = TerminalPaneState::default();
+
+                            let terminal_pane = TerminalPane::new()
+                                .task_name(task.name.clone())
+                                .pty_data(&mut terminal_pane_data)
+                                .focused(is_focused)
+                                .continuous(task.continuous);
+
+                            f.render_stateful_widget(terminal_pane, *chunk, &mut state);
+                        }
+                    } else {
+                        let placeholder =
+                            Paragraph::new("Press 1 or 2 on a task to show it here")
+                                .block(
+                                    Block::default()
+                                        .title(format!("Output {}", pane_idx + 1))
+                                        .borders(Borders::ALL)
+                                        .border_style(Style::default().fg(Color::DarkGray)),
+                                )
+                                .style(Style::default().fg(Color::DarkGray))
+                                .alignment(Alignment::Center);
+
+                        f.render_widget(placeholder, *chunk);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
