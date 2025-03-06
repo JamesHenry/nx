@@ -53,7 +53,7 @@ pub struct TasksList {
     terminal_pane_data: [TerminalPaneData; 2],
     target_names: Vec<String>,
     task_list_hidden: bool, // New field to track if task list is hidden
-    nx_cloud_message: Option<String>,
+    cloud_message: Option<String>,
 }
 
 /// Represents an individual task with its current state and execution details.
@@ -334,7 +334,7 @@ impl TasksList {
             terminal_pane_data: [TerminalPaneData::new(), TerminalPaneData::new()],
             target_names,
             task_list_hidden: false,
-            nx_cloud_message: None,
+            cloud_message: None,
         }
     }
 
@@ -1124,8 +1124,8 @@ impl TasksList {
         }
     }
 
-    pub fn set_nx_cloud_message(&mut self, message: Option<String>) {
-        self.nx_cloud_message = message;
+    pub fn set_cloud_message(&mut self, message: Option<String>) {
+        self.cloud_message = message;
     }
 }
 
@@ -1264,7 +1264,7 @@ impl Component for TasksList {
             let content_width: usize = title_text.iter().map(|s| s.width()).sum();
 
             // Check if we have a cloud message to display
-            if let Some(message) = &self.nx_cloud_message {
+            if let Some(message) = &self.cloud_message {
                 if !self.has_visible_panes() {
                     // Extract URL for styling if present
                     if let Some(url_pos) = message.find("https://") {
@@ -1936,7 +1936,7 @@ impl Default for TasksList {
             terminal_pane_data: [TerminalPaneData::default(), TerminalPaneData::default()],
             target_names: Vec::new(),
             task_list_hidden: false,
-            nx_cloud_message: None,
+            cloud_message: None,
         }
     }
 }

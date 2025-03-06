@@ -1,8 +1,8 @@
 use super::task::Task;
 use super::{
     action::Action,
+    cloud_log_watcher::CloudLogWatcher,
     components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
-    log_watcher::{LogEntry, LogWatcher},
     tui,
 };
 use crate::native::tui::tui::Tui;
@@ -27,7 +27,7 @@ pub struct App {
     focus: Focus,
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
-    log_watcher: Option<LogWatcher>,
+    log_watcher: Option<CloudLogWatcher>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -543,11 +543,9 @@ impl App {
                 }).ok();
             }
             Action::LogFileUpdated(content) => {
-                // Update the nx_cloud_message with the new content
-                if let Err(e) = self.set_nx_cloud_message(Some(content)) {
-                    log::error!("Failed to set nx_cloud_message: {}", e);
+                if let Err(e) = self.set_cloud_message(Some(content)) {
+                    log::error!("Failed to set cloud_message: {}", e);
                 }
-
                 // Trigger a render to update the UI
                 if let Err(e) = action_tx.send(Action::Render) {
                     log::error!("Failed to send Render action: {}", e);
@@ -584,30 +582,25 @@ impl App {
         self.focus
     }
 
-    pub fn init_log_watcher<P: AsRef<std::path::Path>>(
+    pub fn init_cloud_log_watcher<P: AsRef<std::path::Path>>(
         &mut self,
         log_path: P,
         action_tx: &UnboundedSender<Action>,
     ) -> Result<()> {
-        let mut log_watcher = LogWatcher::new(log_path);
-
-        // Set up the action sender for the log watcher
-        log_watcher.set_action_sender(action_tx.clone());
-
-        // Start the log watcher
-        log_watcher.start_watching()?;
-        self.log_watcher = Some(log_watcher);
-
+        let mut cloud_log_watcher = CloudLogWatcher::new(log_path);
+        cloud_log_watcher.set_action_sender(action_tx.clone());
+        cloud_log_watcher.start_watching()?;
+        self.log_watcher = Some(cloud_log_watcher);
         Ok(())
     }
 
-    pub fn set_nx_cloud_message(&mut self, message: Option<String>) -> Result<()> {
+    pub fn set_cloud_message(&mut self, message: Option<String>) -> Result<()> {
         if let Some(tasks_list) = self
             .components
             .iter_mut()
             .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
         {
-            tasks_list.set_nx_cloud_message(message);
+            tasks_list.set_cloud_message(message);
         }
         Ok(())
     }

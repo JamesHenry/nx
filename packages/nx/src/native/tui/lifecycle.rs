@@ -154,32 +154,18 @@ impl AppLifeCycle {
         // Set up better-panic to capture backtraces
         better_panic::install();
 
-        // Create a file to capture panic output
-        let log_file = std::fs::File::create("nxr-panic.log")
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create log file: {}", e)))?;
-        let log_file = std::sync::Arc::new(std::sync::Mutex::new(log_file));
-
-        // Set up a panic hook that writes to both stderr and our log file
-        let log_file_clone = log_file.clone();
+        // TODO: refactor this
+        // Set up a panic hook that writes to stderr
         std::panic::set_hook(Box::new(move |panic_info| {
             let backtrace = std::backtrace::Backtrace::capture();
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("<unnamed>");
-
             let msg = format!(
                 "\n\nThread '{}' panicked at '{}'\n{:?}\n\n",
                 thread_name, panic_info, backtrace
             );
-
             // Write to stderr
             eprintln!("{}", msg);
-
-            // Also write to our log file
-            if let Ok(mut file) = log_file_clone.lock() {
-                use std::io::Write;
-                let _ = writeln!(file, "{}", msg);
-                let _ = file.flush();
-            }
         }));
 
         let app_mutex = self.app.clone();
@@ -208,7 +194,7 @@ impl AppLifeCycle {
                 .join("cache")
                 .join("cloud")
                 .join("client-messages-for-tui.json");
-            let _ = app.init_log_watcher(log_file_path, &action_tx);
+            let _ = app.init_cloud_log_watcher(log_file_path, &action_tx);
 
             for component in app.components.iter_mut() {
                 component.register_action_handler(action_tx.clone()).ok();
