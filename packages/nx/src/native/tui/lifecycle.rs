@@ -4,23 +4,12 @@ use super::task::{
     TaskTarget as RustTaskTarget,
 };
 use super::utils::initialize_panic_handler;
-use super::{
-    action::Action,
-    app::Focus,
-    components::{help_popup::HelpPopup, tasks_list::TasksList},
-};
 use super::{app, pty, task, tui};
 use crate::native::logger::enable_logger;
 use crate::native::tui::app::App;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi::JsObject;
-use ratatui::{
-    layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::Paragraph,
-};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tasks_list::TaskStatus;
@@ -209,10 +198,17 @@ impl AppLifeCycle {
         let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
         debug!("Initialized Action Channel");
 
-        // Initialize components
+        // Initialize components and log file watcher
         if let Ok(mut app) = app_mutex.lock() {
             // Store callback for cleanup
             app.set_done_callback(done_callback);
+
+            // Initialize log watcher with the action sender
+            let log_file_path = std::path::Path::new(".nx")
+                .join("cache")
+                .join("cloud")
+                .join("client-messages-for-tui.json");
+            let _ = app.init_log_watcher(log_file_path, &action_tx);
 
             for component in app.components.iter_mut() {
                 component.register_action_handler(action_tx.clone()).ok();
@@ -220,6 +216,7 @@ impl AppLifeCycle {
             }
         }
         debug!("Initialized Components");
+
 
         napi::tokio::spawn(async move {
             loop {
@@ -434,11 +431,8 @@ pub fn restore_terminal() -> Result<()> {
 pub struct RunningTask {
     task: Task,
     app: Arc<Mutex<App>>,
-    exit_callback: Option<
-        Arc<
-            Mutex<Option<ThreadsafeFunction<(i32, String), ErrorStrategy::Fatal>>>,
-        >,
-    >,
+    exit_callback:
+        Option<Arc<Mutex<Option<ThreadsafeFunction<(i32, String), ErrorStrategy::Fatal>>>>>,
 }
 
 #[napi]

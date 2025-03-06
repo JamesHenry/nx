@@ -1,9 +1,11 @@
-use super::task::{Task};
+use super::task::Task;
 use super::{
     action::Action,
     components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
+    log_watcher::{LogEntry, LogWatcher},
     tui,
 };
+use crate::native::tui::tui::Tui;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
@@ -15,7 +17,6 @@ use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
-use crate::native::tui::tui::Tui;
 
 pub struct App {
     pub tick_rate: f64,
@@ -26,6 +27,7 @@ pub struct App {
     focus: Focus,
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
+    log_watcher: Option<LogWatcher>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +58,7 @@ impl App {
             focus: Focus::TaskList,
             previous_focus: Focus::TaskList,
             done_callback: None,
+            log_watcher: None,
         })
     }
 
@@ -436,11 +439,17 @@ impl App {
         Ok(false)
     }
 
-    pub fn handle_action(&mut self, tui: &mut Tui, action: Action, action_tx: &UnboundedSender<Action>) {
+    pub fn handle_action(
+        &mut self,
+        tui: &mut Tui,
+        action: Action,
+        action_tx: &UnboundedSender<Action>,
+    ) {
         if action != Action::Tick && action != Action::Render {
             log::debug!("{action:?}");
         }
-        match action {
+        match action.clone() {
+            // Clone the action here to avoid partial move issues
             Action::Tick => {
                 self.last_tick_key_events.drain(..);
             }
@@ -470,15 +479,12 @@ impl App {
                         let r = component.draw(f, f.area());
                         if let Err(e) = r {
                             action_tx
-                                .send(Action::Error(format!(
-                                    "Failed to draw: {:?}",
-                                    e
-                                )))
+                                .send(Action::Error(format!("Failed to draw: {:?}", e)))
                                 .ok();
                         }
                     }
                 })
-                    .ok();
+                .ok();
             }
             Action::Render => {
                 tui.draw(|f| {
@@ -537,6 +543,17 @@ impl App {
                     }
                 }).ok();
             }
+            Action::LogFileUpdated(content) => {
+                // Update the nx_cloud_message with the new content
+                if let Err(e) = self.set_nx_cloud_message(Some(content)) {
+                    log::error!("Failed to set nx_cloud_message: {}", e);
+                }
+                
+                // Trigger a render to update the UI
+                if let Err(e) = action_tx.send(Action::Render) {
+                    log::error!("Failed to send Render action: {}", e);
+                }
+            }
             _ => {}
         }
 
@@ -548,17 +565,61 @@ impl App {
         }
     }
 
-    pub fn set_done_callback(&mut self, done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>) {
+    pub fn set_done_callback(
+        &mut self,
+        done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+    ) {
         self.done_callback = Some(done_callback);
     }
 
     pub fn call_done_callback(&self) {
         if let Some(cb) = &self.done_callback {
-            cb.call((), napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking);
+            cb.call(
+                (),
+                napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking,
+            );
         }
     }
 
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    // Add a method to initialize the log watcher
+    pub fn init_log_watcher<P: AsRef<std::path::Path>>(
+        &mut self,
+        log_path: P,
+        action_tx: &UnboundedSender<Action>,
+    ) -> Result<()> {
+        let mut log_watcher = LogWatcher::new(log_path);
+
+        // Set up the action sender for the log watcher
+        log_watcher.set_action_sender(action_tx.clone());
+
+        // Start the log watcher
+        log_watcher.start_watching()?;
+        self.log_watcher = Some(log_watcher);
+
+        Ok(())
+    }
+
+    // Add a method to get log entries
+    pub fn get_log_entries(&self) -> Vec<LogEntry> {
+        if let Some(log_watcher) = &self.log_watcher {
+            return log_watcher.get_entries();
+        }
+        Vec::new()
+    }
+
+    // Add a method to set the nx_cloud_message
+    pub fn set_nx_cloud_message(&mut self, message: Option<String>) -> Result<()> {
+        if let Some(tasks_list) = self
+            .components
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
+        {
+            tasks_list.set_nx_cloud_message(message);
+        }
+        Ok(())
     }
 }

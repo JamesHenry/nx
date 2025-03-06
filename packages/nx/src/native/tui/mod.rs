@@ -6,3 +6,4 @@ pub mod pty;
 pub mod task;
 pub mod tui;
 pub mod utils;
+pub mod log_watcher;
