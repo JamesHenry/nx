@@ -11,11 +11,8 @@ use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span, Text},
-    widgets::{
-        Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Table, TableState,
-    },
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, Paragraph, Row, ScrollbarState, Table},
     Frame,
 };
 use std::any::Any;
@@ -1127,7 +1124,6 @@ impl TasksList {
         }
     }
 
-    // Add a method to set the nx_cloud_message
     pub fn set_nx_cloud_message(&mut self, message: Option<String>) {
         self.nx_cloud_message = message;
     }
@@ -1283,10 +1279,7 @@ impl Component for TasksList {
 
                         // Define styles
                         let dimmed_style = Style::default().fg(Color::DarkGray);
-                        let url_style = Style::default()
-                            .fg(Color::LightCyan)
-                            .bold()
-                            .underlined();
+                        let url_style = Style::default().fg(Color::LightCyan).bold().underlined();
 
                         // Case 1: Enough space for everything (prefix + URL + buffer)
                         if available_width >= content_width + total_message_width + buffer_space {

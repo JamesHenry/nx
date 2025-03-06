@@ -449,7 +449,6 @@ impl App {
             log::debug!("{action:?}");
         }
         match action.clone() {
-            // Clone the action here to avoid partial move issues
             Action::Tick => {
                 self.last_tick_key_events.drain(..);
             }
@@ -548,7 +547,7 @@ impl App {
                 if let Err(e) = self.set_nx_cloud_message(Some(content)) {
                     log::error!("Failed to set nx_cloud_message: {}", e);
                 }
-                
+
                 // Trigger a render to update the UI
                 if let Err(e) = action_tx.send(Action::Render) {
                     log::error!("Failed to send Render action: {}", e);
@@ -585,7 +584,6 @@ impl App {
         self.focus
     }
 
-    // Add a method to initialize the log watcher
     pub fn init_log_watcher<P: AsRef<std::path::Path>>(
         &mut self,
         log_path: P,
@@ -603,15 +601,6 @@ impl App {
         Ok(())
     }
 
-    // Add a method to get log entries
-    pub fn get_log_entries(&self) -> Vec<LogEntry> {
-        if let Some(log_watcher) = &self.log_watcher {
-            return log_watcher.get_entries();
-        }
-        Vec::new()
-    }
-
-    // Add a method to set the nx_cloud_message
     pub fn set_nx_cloud_message(&mut self, message: Option<String>) -> Result<()> {
         if let Some(tasks_list) = self
             .components

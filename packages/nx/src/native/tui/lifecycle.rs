@@ -217,7 +217,6 @@ impl AppLifeCycle {
         }
         debug!("Initialized Components");
 
-
         napi::tokio::spawn(async move {
             loop {
                 // Handle events using our Tui abstraction
