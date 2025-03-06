@@ -1,7 +1,6 @@
 use super::task::Task;
 use super::{
     action::Action,
-    cloud_log_watcher::CloudLogWatcher,
     components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
     tui,
 };
@@ -27,7 +26,6 @@ pub struct App {
     focus: Focus,
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
-    log_watcher: Option<CloudLogWatcher>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +56,6 @@ impl App {
             focus: Focus::TaskList,
             previous_focus: Focus::TaskList,
             done_callback: None,
-            log_watcher: None,
         })
     }
 
@@ -543,13 +540,9 @@ impl App {
                 }).ok();
             }
             Action::LogFileUpdated(content) => {
-                if let Err(e) = self.set_cloud_message(Some(content)) {
-                    log::error!("Failed to set cloud_message: {}", e);
-                }
+                self.set_cloud_message(Some(content));
                 // Trigger a render to update the UI
-                if let Err(e) = action_tx.send(Action::Render) {
-                    log::error!("Failed to send Render action: {}", e);
-                }
+                action_tx.send(Action::Render).ok();
             }
             _ => {}
         }
@@ -582,19 +575,7 @@ impl App {
         self.focus
     }
 
-    pub fn init_cloud_log_watcher<P: AsRef<std::path::Path>>(
-        &mut self,
-        log_path: P,
-        action_tx: &UnboundedSender<Action>,
-    ) -> Result<()> {
-        let mut cloud_log_watcher = CloudLogWatcher::new(log_path);
-        cloud_log_watcher.set_action_sender(action_tx.clone());
-        cloud_log_watcher.start_watching()?;
-        self.log_watcher = Some(cloud_log_watcher);
-        Ok(())
-    }
-
-    pub fn set_cloud_message(&mut self, message: Option<String>) -> Result<()> {
+    pub fn set_cloud_message(&mut self, message: Option<String>) {
         if let Some(tasks_list) = self
             .components
             .iter_mut()
@@ -602,6 +583,5 @@ impl App {
         {
             tasks_list.set_cloud_message(message);
         }
-        Ok(())
     }
 }

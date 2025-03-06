@@ -142,104 +142,6 @@ impl AppLifeCycle {
     }
 
     #[napi]
-    pub fn init(
-        &self,
-        done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
-    ) -> napi::Result<()> {
-        // Initialize logging and panic handlers first
-        debug!("Initializing Terminal UI");
-        enable_logger();
-        initialize_panic_handler().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-
-        // Set up better-panic to capture backtraces
-        better_panic::install();
-
-        // TODO: refactor this
-        // Set up a panic hook that writes to stderr
-        std::panic::set_hook(Box::new(move |panic_info| {
-            let backtrace = std::backtrace::Backtrace::capture();
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("<unnamed>");
-            let msg = format!(
-                "\n\nThread '{}' panicked at '{}'\n{:?}\n\n",
-                thread_name, panic_info, backtrace
-            );
-            // Write to stderr
-            eprintln!("{}", msg);
-        }));
-
-        let app_mutex = self.app.clone();
-
-        // Initialize our Tui abstraction
-        let mut tui = tui::Tui::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        tui.enter()
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        debug!("Initialized Terminal UI");
-
-        // Set tick and frame rates
-        tui.tick_rate(10.0);
-        tui.frame_rate(60.0);
-
-        // Initialize action channel
-        let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
-        debug!("Initialized Action Channel");
-
-        // Initialize components and log file watcher
-        if let Ok(mut app) = app_mutex.lock() {
-            // Store callback for cleanup
-            app.set_done_callback(done_callback);
-
-            // Initialize log watcher with the action sender
-            let log_file_path = std::path::Path::new(".nx")
-                .join("cache")
-                .join("cloud")
-                .join("client-messages-for-tui.json");
-            let _ = app.init_cloud_log_watcher(log_file_path, &action_tx);
-
-            for component in app.components.iter_mut() {
-                component.register_action_handler(action_tx.clone()).ok();
-                component.init().ok();
-            }
-        }
-        debug!("Initialized Components");
-
-        napi::tokio::spawn(async move {
-            loop {
-                // Handle events using our Tui abstraction
-                if let Some(event) = tui.next().await {
-                    if let Ok(mut app) = app_mutex.lock() {
-                        if let Ok(true) = app.handle_event(event, &action_tx) {
-                            tui.exit().ok();
-                            app.call_done_callback();
-                            break;
-                        }
-                    }
-                }
-
-                // Process actions
-                while let Ok(action) = action_rx.try_recv() {
-                    if let Ok(mut app) = app_mutex.lock() {
-                        app.handle_action(&mut tui, action, &action_tx);
-
-                        // Check if we should quit
-                        if app.should_quit {
-                            debug!("Quitting TUI");
-                            tui.stop().ok();
-                            debug!("Exiting TUI");
-                            tui.exit().ok();
-                            debug!("Calling exit callback");
-                            app.call_done_callback();
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-
-        Ok(())
-    }
-
-    #[napi]
     pub fn schedule_task(&mut self, _task: Task) -> napi::Result<()> {
         // Always intentional noop
         Ok(())
@@ -312,7 +214,108 @@ impl AppLifeCycle {
         Ok(())
     }
 
-    // New lifecycle method to handle task execution in rust
+    // Rust-only lifecycle method
+    #[napi(js_name = "__init")]
+    pub fn __init(
+        &self,
+        done_callback: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+    ) -> napi::Result<()> {
+        // Initialize logging and panic handlers first
+        debug!("Initializing Terminal UI");
+        enable_logger();
+        initialize_panic_handler().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        // Set up better-panic to capture backtraces
+        better_panic::install();
+
+        // TODO: refactor this
+        // Set up a panic hook that writes to stderr
+        std::panic::set_hook(Box::new(move |panic_info| {
+            let backtrace = std::backtrace::Backtrace::capture();
+            let thread = std::thread::current();
+            let thread_name = thread.name().unwrap_or("<unnamed>");
+            let msg = format!(
+                "\n\nThread '{}' panicked at '{}'\n{:?}\n\n",
+                thread_name, panic_info, backtrace
+            );
+            // Write to stderr
+            eprintln!("{}", msg);
+        }));
+
+        let app_mutex = self.app.clone();
+
+        // Initialize our Tui abstraction
+        let mut tui = tui::Tui::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        tui.enter()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        debug!("Initialized Terminal UI");
+
+        // Set tick and frame rates
+        tui.tick_rate(10.0);
+        tui.frame_rate(60.0);
+
+        // Initialize action channel
+        let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
+        debug!("Initialized Action Channel");
+
+        // Initialize components
+        if let Ok(mut app) = app_mutex.lock() {
+            // Store callback for cleanup
+            app.set_done_callback(done_callback);
+
+            for component in app.components.iter_mut() {
+                component.register_action_handler(action_tx.clone()).ok();
+                component.init().ok();
+            }
+        }
+        debug!("Initialized Components");
+
+        napi::tokio::spawn(async move {
+            loop {
+                // Handle events using our Tui abstraction
+                if let Some(event) = tui.next().await {
+                    if let Ok(mut app) = app_mutex.lock() {
+                        if let Ok(true) = app.handle_event(event, &action_tx) {
+                            tui.exit().ok();
+                            app.call_done_callback();
+                            break;
+                        }
+                    }
+                }
+
+                // Process actions
+                while let Ok(action) = action_rx.try_recv() {
+                    if let Ok(mut app) = app_mutex.lock() {
+                        app.handle_action(&mut tui, action, &action_tx);
+
+                        // Check if we should quit
+                        if app.should_quit {
+                            debug!("Quitting TUI");
+                            tui.stop().ok();
+                            debug!("Exiting TUI");
+                            tui.exit().ok();
+                            debug!("Calling exit callback");
+                            app.call_done_callback();
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    // Rust-only lifecycle method
+    #[napi(js_name = "__setCloudMessage")]
+    pub async fn __set_cloud_message(&self, message: String) -> napi::Result<()> {
+        if let Ok(mut app) = self.app.lock() {
+            let _ = app.set_cloud_message(Some(message));
+        }
+        Ok(())
+    }
+
+    // Rust-only lifecycle method
     #[napi(js_name = "__runCommandsForTask")]
     pub async fn __run_commands_for_task(
         &self,
