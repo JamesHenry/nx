@@ -26,6 +26,4 @@ pub enum Action {
     FocusPrevious,
     ScrollPaneUp(usize),
     ScrollPaneDown(usize),
-    // Log watcher actions
-    LogFileUpdated(String), // Contains the content of the log file
 }

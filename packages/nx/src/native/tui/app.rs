@@ -539,11 +539,6 @@ impl App {
                     }
                 }).ok();
             }
-            Action::LogFileUpdated(content) => {
-                self.set_cloud_message(Some(content));
-                // Trigger a render to update the UI
-                action_tx.send(Action::Render).ok();
-            }
             _ => {}
         }
 
