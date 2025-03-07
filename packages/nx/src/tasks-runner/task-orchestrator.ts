@@ -39,6 +39,7 @@ import type { TaskDetails } from '../native';
 import { NoopChildProcess } from './running-tasks/noop-child-process';
 import { RunningTask } from './running-tasks/running-task';
 import { NxArgs } from '../utils/command-line-utils';
+import { PseudoTtyProcess } from './pseudo-terminal';
 
 export class TaskOrchestrator {
   private taskDetails: TaskDetails | null = getTaskDetails();
@@ -544,6 +545,11 @@ export class TaskOrchestrator {
         temporaryOutputPath,
         streamOutput
       );
+
+      if (runningTask instanceof PseudoTtyProcess) {
+        // This is an external of a the pseudo terminal where a task is running and can be passed to the TUI
+        runningTask.rustPseudoTerminal.getPseudoTerminal();
+      }
 
       return runningTask;
     }

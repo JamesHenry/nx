@@ -1,4 +1,6 @@
+use napi::bindgen_prelude::External;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use tracing::trace;
 
@@ -21,6 +23,11 @@ impl RustPseudoTerminal {
         let pseudo_terminal = PseudoTerminal::default()?;
 
         Ok(Self { pseudo_terminal })
+    }
+
+    #[napi]
+    pub fn get_pseudo_terminal(&self) -> napi::Result<External<&PseudoTerminal>> {
+        Ok(External::new(&self.pseudo_terminal))
     }
 
     #[napi]

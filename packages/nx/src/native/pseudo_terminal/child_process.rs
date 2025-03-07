@@ -27,8 +27,7 @@ impl ChildProcess {
     pub fn new(
         process_killer: Box<dyn ChildKiller + Sync + Send>,
         message_receiver: Receiver<String>,
-        exit_receiver: Receiver<String>,
-        parent_terminal: External<&PseudoTerminal>
+        exit_receiver: Receiver<String>
     ) -> Self {
         Self {
             process_killer,
@@ -37,9 +36,6 @@ impl ChildProcess {
             thread_handles: vec![],
         }
     }
-    
-    #[napi]
-    pub fn send()
 
     #[napi]
     pub fn kill(&mut self) -> anyhow::Result<()> {

@@ -78,6 +78,7 @@ export declare class RunningTask {
 
 export declare class RustPseudoTerminal {
   constructor()
+  getPseudoTerminal(): ExternalObject<PseudoTerminal>
   runCommand(command: string, commandDir?: string | undefined | null, jsEnv?: Record<string, string> | undefined | null, execArgv?: Array<string> | undefined | null, quiet?: boolean | undefined | null, tty?: boolean | undefined | null): ChildProcess
   /**
    * This allows us to run a pseudoterminal with a fake node ipc channel
@@ -291,6 +292,8 @@ export declare export function restoreTerminal(): void
 export interface RuntimeInput {
   runtime: string
 }
+
+export declare export function showInfoAboutParser(terminal: ExternalObject<PseudoTerminal>): void
 
 export interface Target {
   executor?: string

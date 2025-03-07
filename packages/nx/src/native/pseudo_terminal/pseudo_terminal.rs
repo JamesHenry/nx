@@ -1,3 +1,15 @@
+use anyhow::anyhow;
+use crossbeam_channel::{bounded, unbounded, Receiver};
+use crossterm::{
+    terminal,
+    terminal::{disable_raw_mode, enable_raw_mode},
+    tty::IsTty,
+};
+use napi::bindgen_prelude::*;
+use nom::AsBytes;
+use portable_pty::{CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
+use std::io::stdout;
+use std::sync::{Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
     env,
@@ -8,18 +20,9 @@ use std::{
     },
     time::Instant,
 };
-
-use anyhow::anyhow;
-use crossbeam_channel::{bounded, unbounded, Receiver};
-use crossterm::{
-    terminal,
-    terminal::{disable_raw_mode, enable_raw_mode},
-    tty::IsTty,
-};
-use napi::bindgen_prelude::*;
-use portable_pty::{CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
+use tracing::debug;
 use tracing::log::trace;
-use vt100_ctt::Parser;
+use vt100_ctt::{Parser, Screen};
 
 use super::os;
 use crate::native::pseudo_terminal::child_process::ChildProcess;
@@ -30,6 +33,7 @@ pub struct PseudoTerminal {
     pub printing_rx: Receiver<()>,
     pub quiet: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
+    pub parser: Arc<RwLock<Parser>>,
 }
 
 pub struct PseudoTerminalOptions {
@@ -39,7 +43,7 @@ pub struct PseudoTerminalOptions {
 
 impl Default for PseudoTerminalOptions {
     fn default() -> Self {
-        let (w, h) = terminal::size().unwrap_or((80, 24));
+        let (w, h) = terminal::size().unwrap();
         Self {
             size: (w, h),
             passthrough_stdin: !env::var("NX_TUI").is_ok_and(|s| s == "true"),
@@ -81,10 +85,12 @@ impl PseudoTerminal {
         // Output -> stdout handling
         let quiet_clone = quiet.clone();
         let running_clone = running.clone();
+
+        let parser = Arc::new(RwLock::new(Parser::new(h, w, 10000)));
+        let parser_clone = parser.clone();
         std::thread::spawn(move || {
             let mut stdout = std::io::stdout();
             let mut buf = [0; 8 * 1024];
-            let mut parser = Parser::new(h, w, 10000);
             let mut first: bool = true;
 
             'read_loop: loop {
@@ -97,7 +103,7 @@ impl PseudoTerminal {
                         .ok();
                     let quiet = quiet_clone.load(Ordering::Relaxed);
                     trace!("Quiet: {}", quiet);
-                    if !quiet {
+                    if let Ok(mut parser) = parser_clone.write() {
                         let prev = parser.screen().clone();
                         parser.process(&buf[0..len]);
                         let write_buf = if first {
@@ -106,26 +112,29 @@ impl PseudoTerminal {
                             parser.screen().contents_diff(&prev)
                         };
                         first = false;
-
-                        let mut logged_interrupted_error = false;
-                        while let Err(e) = stdout.write_all(&write_buf) {
-                            match e.kind() {
-                                std::io::ErrorKind::Interrupted => {
-                                    if !logged_interrupted_error {
-                                        trace!("Interrupted error writing to stdout: {:?}", e);
-                                        logged_interrupted_error = true;
+                        if !quiet {
+                            let mut logged_interrupted_error = false;
+                            while let Err(e) = stdout.write_all(&write_buf) {
+                                match e.kind() {
+                                    std::io::ErrorKind::Interrupted => {
+                                        if !logged_interrupted_error {
+                                            trace!("Interrupted error writing to stdout: {:?}", e);
+                                            logged_interrupted_error = true;
+                                        }
+                                        continue;
                                     }
-                                    continue;
-                                }
-                                _ => {
-                                    // We should figure out what to do for more error types as they appear.
-                                    trace!("Error writing to stdout: {:?}", e);
-                                    trace!("Error kind: {:?}", e.kind());
-                                    break 'read_loop;
+                                    _ => {
+                                        // We should figure out what to do for more error types as they appear.
+                                        trace!("Error writing to stdout: {:?}", e);
+                                        trace!("Error kind: {:?}", e.kind());
+                                        break 'read_loop;
+                                    }
                                 }
                             }
+                            let _ = stdout.flush();
                         }
-                        let _ = stdout.flush();
+                    } else {
+                        println!("Failed to lock parser");
                     }
                 }
                 if !running_clone.load(Ordering::SeqCst) {
@@ -138,10 +147,15 @@ impl PseudoTerminal {
         Ok(PseudoTerminal {
             quiet,
             running,
+            parser,
             pty_pair,
             message_rx,
             printing_rx,
         })
+    }
+
+    pub fn get_screen(&self) -> Arc<RwLock<Parser>> {
+        self.parser.clone()
     }
 
     pub fn default() -> Result<PseudoTerminal> {
@@ -234,6 +248,17 @@ impl PseudoTerminal {
             self.message_rx.clone(),
             exit_to_process_rx,
         ))
+    }
+}
+
+#[napi]
+pub fn show_info_about_parser(terminal: External<&PseudoTerminal>) {
+    if let Ok(a) = terminal.get_screen().read() {
+        stdout()
+            .write_all(a.screen().contents().as_bytes())
+            .unwrap();
+    } else {
+        println!("Failed to lock parser");
     }
 }
 

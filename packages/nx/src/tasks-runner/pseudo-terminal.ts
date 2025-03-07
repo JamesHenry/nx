@@ -39,6 +39,10 @@ export class PseudoTerminal {
     this.initialized = true;
   }
 
+  getPseudoTerminal() {
+    return this.rustPseudoTerminal.getPseudoTerminal();
+  }
+
   runCommand(
     command: string,
     {
@@ -56,6 +60,7 @@ export class PseudoTerminal {
     } = {}
   ) {
     return new PseudoTtyProcess(
+      this.rustPseudoTerminal,
       this.rustPseudoTerminal.runCommand(
         command,
         cwd,
@@ -86,6 +91,7 @@ export class PseudoTerminal {
       throw new Error('Call init() before forking processes');
     }
     const cp = new PseudoTtyProcessWithSend(
+      this.rustPseudoTerminal,
       this.rustPseudoTerminal.fork(
         id,
         script,
@@ -145,7 +151,10 @@ export class PseudoTtyProcess {
 
   private terminalOutput = '';
 
-  constructor(private childProcess: ChildProcess) {
+  constructor(
+    public rustPseudoTerminal: RustPseudoTerminal,
+    private childProcess: ChildProcess
+  ) {
     childProcess.onOutput((output) => {
       this.terminalOutput += output;
       this.outputCallbacks.forEach((cb) => cb(output));
@@ -193,11 +202,12 @@ export class PseudoTtyProcess {
 
 export class PseudoTtyProcessWithSend extends PseudoTtyProcess {
   constructor(
+    public rustPseudoTerminal: RustPseudoTerminal,
     _childProcess: ChildProcess,
     private id: string,
     private pseudoIpc: PseudoIPCServer
   ) {
-    super(_childProcess);
+    super(rustPseudoTerminal, _childProcess);
   }
 
   send(message: Serializable) {
