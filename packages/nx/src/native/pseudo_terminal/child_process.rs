@@ -6,8 +6,10 @@ use napi::{
   },
   Env, JsFunction,
 };
+use napi::bindgen_prelude::External;
 use portable_pty::ChildKiller;
 use tracing::warn;
+use crate::native::pseudo_terminal::pseudo_terminal::PseudoTerminal;
 
 pub enum ChildProcessMessage {
     Kill,
@@ -26,6 +28,7 @@ impl ChildProcess {
         process_killer: Box<dyn ChildKiller + Sync + Send>,
         message_receiver: Receiver<String>,
         exit_receiver: Receiver<String>,
+        parent_terminal: External<&PseudoTerminal>
     ) -> Self {
         Self {
             process_killer,
@@ -34,6 +37,9 @@ impl ChildProcess {
             thread_handles: vec![],
         }
     }
+    
+    #[napi]
+    pub fn send()
 
     #[napi]
     pub fn kill(&mut self) -> anyhow::Result<()> {

@@ -537,13 +537,15 @@ export class TaskOrchestrator {
       });
     } else {
       // cache prep
-      return await this.runTaskInForkedProcess(
+      const runningTask = await this.runTaskInForkedProcess(
         task,
         env,
         pipeOutput,
         temporaryOutputPath,
         streamOutput
       );
+
+      return runningTask;
     }
   }
 

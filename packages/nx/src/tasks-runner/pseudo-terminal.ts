@@ -14,9 +14,11 @@ export function getPseudoTerminal(skipSupportCheck: boolean = false) {
 
   return pseudoTerminal;
 }
-
+let id = 0;
 export class PseudoTerminal {
-  private pseudoIPCPath = getForkedProcessOsSocketPath(process.pid.toString());
+  private pseudoIPCPath = getForkedProcessOsSocketPath(
+    process.pid.toString() + '-' + id++
+  );
   private pseudoIPC = new PseudoIPCServer(this.pseudoIPCPath);
 
   private initialized: boolean = false;
