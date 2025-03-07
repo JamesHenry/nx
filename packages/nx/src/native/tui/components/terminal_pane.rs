@@ -12,6 +12,7 @@ use ratatui::{
 };
 use std::io;
 use tui_term::widget::PseudoTerminal;
+use crate::native::pseudo_terminal::pseudo_terminal::PseudoTerminal as NxPseudoTerminal;
 
 use super::tasks_list::TaskStatus;
 use crate::native::tui::pty::PtyInstance;
@@ -28,6 +29,14 @@ pub struct TerminalPane<'a> {
     pty_data: Option<&'a mut TerminalPaneData>,
     is_focused: bool,
     is_continuous: bool,
+    pseudo_terminal: Option<&'a NxPseudoTerminal>,
+}
+
+impl<'a> TerminalPane<'a> {
+    pub(crate) fn pseudo_terminal(mut self, p0: &'a NxPseudoTerminal) -> Self {
+        self.pseudo_terminal = Some(p0);
+        self
+    }
 }
 
 pub struct TerminalPaneState {
@@ -159,6 +168,7 @@ impl<'a> TerminalPane<'a> {
             pty_data: None,
             is_focused: false,
             is_continuous: false,
+            pseudo_terminal: None,
         }
     }
 
@@ -361,148 +371,293 @@ impl<'a> StatefulWidget for TerminalPane<'a> {
 
         let inner_area = block.inner(area);
 
-        if let Some(pty_data) = &self.pty_data {
-            if let Some(pty) = &pty_data.pty {
-                if let Some(screen) = pty.get_screen() {
-                    let viewport_height = inner_area.height;
-                    let current_scroll = pty.get_scroll_offset();
+        if let Some(pseudo_terminal) = self.pseudo_terminal {
+            let screen = pseudo_terminal.get_screen().clone().read().unwrap().screen();let viewport_height = inner_area.height;
 
-                    let total_content_rows = pty.get_total_content_rows();
-                    let scrollable_rows =
-                        total_content_rows.saturating_sub(viewport_height as usize);
-                    let needs_scrollbar = scrollable_rows > 0;
+            let pseudo_term = PseudoTerminal::new(screen).block(block);
+            Widget::render(pseudo_term, area, buf);
 
-                    // Reset scrollbar state if no scrolling needed
-                    state.scrollbar_state = if needs_scrollbar {
-                        let position = scrollable_rows.saturating_sub(current_scroll);
-                        state
-                            .scrollbar_state
-                            .content_length(scrollable_rows)
-                            .viewport_content_length(viewport_height as usize)
-                            .position(position)
-                    } else {
-                        ScrollbarState::default()
-                    };
+            todo!();
+            // let current_scroll = pseudo_terminal.get_scroll_offset();
 
-                    let pseudo_term = PseudoTerminal::new(&screen).block(block);
-                    Widget::render(pseudo_term, area, buf);
+            let current_scroll = 0;
+            // let total_content_rows = pseudo_terminal.get_total_content_rows();
+            let total_content_rows: i32 = 100;
+            let scrollable_rows =
+                total_content_rows.saturating_sub(viewport_height as usize);
+            let needs_scrollbar = scrollable_rows > 0;
 
-                    // Only render scrollbar if needed
-                    if needs_scrollbar {
-                        let scrollbar = Scrollbar::default()
-                            .orientation(ScrollbarOrientation::VerticalRight)
-                            .begin_symbol(Some("↑"))
-                            .end_symbol(Some("↓"))
-                            .style(border_style);
+            // Reset scrollbar state if no scrolling needed
+            state.scrollbar_state = if needs_scrollbar {
+                let position = scrollable_rows.saturating_sub(current_scroll);
+                state
+                    .scrollbar_state
+                    .content_length(scrollable_rows)
+                    .viewport_content_length(viewport_height as usize)
+                    .position(position)
+            } else {
+                ScrollbarState::default()
+            };
+            Widget::render(pseudo_term, area, buf);
 
-                        scrollbar.render(area, buf, &mut state.scrollbar_state);
-                    }
+            // Only render scrollbar if needed
+            if needs_scrollbar {
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("↑"))
+                    .end_symbol(Some("↓"))
+                    .style(border_style);
 
-                    // Show interactive/readonly status for continuous tasks
-                    if self.is_focused && self.is_continuous {
-                        // Bottom right status
-                        let bottom_text = if is_interactive {
-                            Line::from(vec![
-                                Span::raw("  "),
-                                Span::styled("<ctrl>+z", Style::default().fg(Color::Cyan)),
-                                Span::styled(
-                                    " to exit interactive  ",
+                scrollbar.render(area, buf, &mut state.scrollbar_state);
+            }
+
+            // Show interactive/readonly status for continuous tasks
+            if self.is_focused && self.is_continuous {
+                // Bottom right status
+                let bottom_text = if is_interactive {
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled("<ctrl>+z", Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            " to exit interactive  ",
+                            Style::default().fg(Color::White),
+                        ),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled("i", Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            " to make interactive  ",
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ])
+                };
+
+                let text_width = bottom_text
+                    .spans
+                    .iter()
+                    .map(|span| span.content.len())
+                    .sum::<usize>();
+
+                let bottom_right_area = Rect {
+                    x: area.x + area.width - text_width as u16 - 3,
+                    y: area.y + area.height - 1,
+                    width: text_width as u16 + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(bottom_text)
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(bottom_right_area, buf);
+
+                // Top right status
+                let top_text = if is_interactive {
+                    Line::from(vec![Span::styled(
+                        "  INTERACTIVE  ",
+                        Style::default().fg(Color::White),
+                    )])
+                } else {
+                    Line::from(vec![Span::styled(
+                        "  NON-INTERACTIVE  ",
+                        Style::default().fg(Color::DarkGray),
+                    )])
+                };
+
+                let mode_width = top_text
+                    .spans
+                    .iter()
+                    .map(|span| span.content.len())
+                    .sum::<usize>();
+
+                let top_right_area = Rect {
+                    x: area.x + area.width - mode_width as u16 - 3,
+                    y: area.y,
+                    width: mode_width as u16 + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(top_text)
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(top_right_area, buf);
+            } else if needs_scrollbar {
+                // Render padding for both top and bottom when scrollbar is present
+                let padding_text = Line::from(vec![Span::raw("  ")]);
+                let padding_width = 2;
+
+                // Top padding
+                let top_right_area = Rect {
+                    x: area.x + area.width - padding_width - 3,
+                    y: area.y,
+                    width: padding_width + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(padding_text.clone())
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(top_right_area, buf);
+
+                // Bottom padding
+                let bottom_right_area = Rect {
+                    x: area.x + area.width - padding_width - 3,
+                    y: area.y + area.height - 1,
+                    width: padding_width + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(padding_text)
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(bottom_right_area, buf);
+            }
+        } else {
+            if let Some(pty_data) = &self.pty_data {
+                if let Some(pty) = &pty_data.pty {
+                    if let Some(screen) = pty.get_screen() {
+                        let viewport_height = inner_area.height;
+                        let current_scroll = pty.get_scroll_offset();
+
+                        let total_content_rows = pty.get_total_content_rows();
+                        let scrollable_rows =
+                            total_content_rows.saturating_sub(viewport_height as usize);
+                        let needs_scrollbar = scrollable_rows > 0;
+
+                        // Reset scrollbar state if no scrolling needed
+                        state.scrollbar_state = if needs_scrollbar {
+                            let position = scrollable_rows.saturating_sub(current_scroll);
+                            state
+                                .scrollbar_state
+                                .content_length(scrollable_rows)
+                                .viewport_content_length(viewport_height as usize)
+                                .position(position)
+                        } else {
+                            ScrollbarState::default()
+                        };
+
+                        let pseudo_term = PseudoTerminal::new(&screen).block(block);
+                        Widget::render(pseudo_term, area, buf);
+
+                        // Only render scrollbar if needed
+                        if needs_scrollbar {
+                            let scrollbar = Scrollbar::default()
+                                .orientation(ScrollbarOrientation::VerticalRight)
+                                .begin_symbol(Some("↑"))
+                                .end_symbol(Some("↓"))
+                                .style(border_style);
+
+                            scrollbar.render(area, buf, &mut state.scrollbar_state);
+                        }
+
+                        // Show interactive/readonly status for continuous tasks
+                        if self.is_focused && self.is_continuous {
+                            // Bottom right status
+                            let bottom_text = if is_interactive {
+                                Line::from(vec![
+                                    Span::raw("  "),
+                                    Span::styled("<ctrl>+z", Style::default().fg(Color::Cyan)),
+                                    Span::styled(
+                                        " to exit interactive  ",
+                                        Style::default().fg(Color::White),
+                                    ),
+                                ])
+                            } else {
+                                Line::from(vec![
+                                    Span::raw("  "),
+                                    Span::styled("i", Style::default().fg(Color::Cyan)),
+                                    Span::styled(
+                                        " to make interactive  ",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                ])
+                            };
+
+                            let text_width = bottom_text
+                                .spans
+                                .iter()
+                                .map(|span| span.content.len())
+                                .sum::<usize>();
+
+                            let bottom_right_area = Rect {
+                                x: area.x + area.width - text_width as u16 - 3,
+                                y: area.y + area.height - 1,
+                                width: text_width as u16 + 2,
+                                height: 1,
+                            };
+
+                            Paragraph::new(bottom_text)
+                                .alignment(Alignment::Right)
+                                .style(border_style)
+                                .render(bottom_right_area, buf);
+
+                            // Top right status
+                            let top_text = if is_interactive {
+                                Line::from(vec![Span::styled(
+                                    "  INTERACTIVE  ",
                                     Style::default().fg(Color::White),
-                                ),
-                            ])
-                        } else {
-                            Line::from(vec![
-                                Span::raw("  "),
-                                Span::styled("i", Style::default().fg(Color::Cyan)),
-                                Span::styled(
-                                    " to make interactive  ",
+                                )])
+                            } else {
+                                Line::from(vec![Span::styled(
+                                    "  NON-INTERACTIVE  ",
                                     Style::default().fg(Color::DarkGray),
-                                ),
-                            ])
-                        };
+                                )])
+                            };
 
-                        let text_width = bottom_text
-                            .spans
-                            .iter()
-                            .map(|span| span.content.len())
-                            .sum::<usize>();
+                            let mode_width = top_text
+                                .spans
+                                .iter()
+                                .map(|span| span.content.len())
+                                .sum::<usize>();
 
-                        let bottom_right_area = Rect {
-                            x: area.x + area.width - text_width as u16 - 3,
-                            y: area.y + area.height - 1,
-                            width: text_width as u16 + 2,
-                            height: 1,
-                        };
+                            let top_right_area = Rect {
+                                x: area.x + area.width - mode_width as u16 - 3,
+                                y: area.y,
+                                width: mode_width as u16 + 2,
+                                height: 1,
+                            };
 
-                        Paragraph::new(bottom_text)
-                            .alignment(Alignment::Right)
-                            .style(border_style)
-                            .render(bottom_right_area, buf);
+                            Paragraph::new(top_text)
+                                .alignment(Alignment::Right)
+                                .style(border_style)
+                                .render(top_right_area, buf);
+                        } else if needs_scrollbar {
+                            // Render padding for both top and bottom when scrollbar is present
+                            let padding_text = Line::from(vec![Span::raw("  ")]);
+                            let padding_width = 2;
 
-                        // Top right status
-                        let top_text = if is_interactive {
-                            Line::from(vec![Span::styled(
-                                "  INTERACTIVE  ",
-                                Style::default().fg(Color::White),
-                            )])
-                        } else {
-                            Line::from(vec![Span::styled(
-                                "  NON-INTERACTIVE  ",
-                                Style::default().fg(Color::DarkGray),
-                            )])
-                        };
+                            // Top padding
+                            let top_right_area = Rect {
+                                x: area.x + area.width - padding_width - 3,
+                                y: area.y,
+                                width: padding_width + 2,
+                                height: 1,
+                            };
 
-                        let mode_width = top_text
-                            .spans
-                            .iter()
-                            .map(|span| span.content.len())
-                            .sum::<usize>();
+                            Paragraph::new(padding_text.clone())
+                                .alignment(Alignment::Right)
+                                .style(border_style)
+                                .render(top_right_area, buf);
 
-                        let top_right_area = Rect {
-                            x: area.x + area.width - mode_width as u16 - 3,
-                            y: area.y,
-                            width: mode_width as u16 + 2,
-                            height: 1,
-                        };
+                            // Bottom padding
+                            let bottom_right_area = Rect {
+                                x: area.x + area.width - padding_width - 3,
+                                y: area.y + area.height - 1,
+                                width: padding_width + 2,
+                                height: 1,
+                            };
 
-                        Paragraph::new(top_text)
-                            .alignment(Alignment::Right)
-                            .style(border_style)
-                            .render(top_right_area, buf);
-                    } else if needs_scrollbar {
-                        // Render padding for both top and bottom when scrollbar is present
-                        let padding_text = Line::from(vec![Span::raw("  ")]);
-                        let padding_width = 2;
-
-                        // Top padding
-                        let top_right_area = Rect {
-                            x: area.x + area.width - padding_width - 3,
-                            y: area.y,
-                            width: padding_width + 2,
-                            height: 1,
-                        };
-
-                        Paragraph::new(padding_text.clone())
-                            .alignment(Alignment::Right)
-                            .style(border_style)
-                            .render(top_right_area, buf);
-
-                        // Bottom padding
-                        let bottom_right_area = Rect {
-                            x: area.x + area.width - padding_width - 3,
-                            y: area.y + area.height - 1,
-                            width: padding_width + 2,
-                            height: 1,
-                        };
-
-                        Paragraph::new(padding_text)
-                            .alignment(Alignment::Right)
-                            .style(border_style)
-                            .render(bottom_right_area, buf);
+                            Paragraph::new(padding_text)
+                                .alignment(Alignment::Right)
+                                .style(border_style)
+                                .render(bottom_right_area, buf);
+                        }
                     }
                 }
             }
         }
+
     }
 }
 

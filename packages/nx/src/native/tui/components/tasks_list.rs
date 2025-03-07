@@ -17,7 +17,7 @@ use ratatui::{
 };
 use std::any::Any;
 use std::io;
-
+use crate::native::tui::app::AppState;
 use super::pagination::Pagination;
 use super::task_selection_manager::TaskSelectionManager;
 use super::terminal_pane::{TerminalPane, TerminalPaneData};
@@ -922,7 +922,7 @@ impl TasksList {
 }
 
 impl Component for TasksList {
-    fn draw(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+    fn draw(&mut self, f: &mut Frame<'_>, area: Rect, app_state: &AppState) -> Result<()> {
         // Determine if we should use collapsed mode based on viewport width
         let collapsed_mode = self.has_visible_panes() || area.width < 100;
 
@@ -1526,11 +1526,15 @@ impl Component for TasksList {
                                 };
                                 let mut state = TerminalPaneState::default();
 
-                                let terminal_pane = TerminalPane::new()
+                                let mut terminal_pane = TerminalPane::new()
                                     .task_name(task.name.clone())
                                     .pty_data(&mut terminal_pane_data)
                                     .focused(is_focused)
                                     .continuous(task.continuous);
+
+                                if let Some(pseudo_terminal) = app_state.pseudo_terminals.get(&task.name).unwrap() {
+                                    terminal_pane = terminal_pane.pseudo_terminal(pseudo_terminal);
+                                }
 
                                 f.render_stateful_widget(
                                     terminal_pane,

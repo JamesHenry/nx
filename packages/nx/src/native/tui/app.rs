@@ -7,6 +7,7 @@ use super::{
 use crate::native::tui::tui::Tui;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
+use hashbrown::HashMap;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Modifier;
@@ -16,8 +17,13 @@ use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
+use crate::native::pseudo_terminal::pseudo_terminal::PseudoTerminal;
 
-pub struct App {
+pub struct AppState<'a> {
+    pub pseudo_terminals: HashMap<String, Option<&'a PseudoTerminal>>,
+}
+
+pub struct App<'a> {
     pub tick_rate: f64,
     pub frame_rate: f64,
     pub components: Vec<Box<dyn Component>>,
@@ -26,6 +32,7 @@ pub struct App {
     focus: Focus,
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
+    state: AppState<'a>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +42,7 @@ pub enum Focus {
     HelpPopup,
 }
 
-impl App {
+impl App<'_> {
     pub fn new(
         tick_rate: f64,
         frame_rate: f64,
@@ -56,6 +63,7 @@ impl App {
             focus: Focus::TaskList,
             previous_focus: Focus::TaskList,
             done_callback: None,
+            state: AppState { pseudo_terminals: Default::default() },
         })
     }
 
@@ -460,7 +468,7 @@ impl App {
                 }
                 tui.draw(|f| {
                     for component in self.components.iter_mut() {
-                        let r = component.draw(f, f.area());
+                        let r = component.draw(f, f.area(), &self.state);
                         if let Err(e) = r {
                             action_tx
                                 .send(Action::Error(format!("Failed to draw: {:?}", e)))
@@ -518,7 +526,7 @@ impl App {
                             tasks_list.set_dimmed(matches!(current_focus, Focus::HelpPopup));
                             tasks_list.set_focus(current_focus);
                         }
-                        let r = component.draw(f, f.area());
+                        let r = component.draw(f, f.area(), &self.state);
                         if let Err(e) = r {
                             action_tx
                                 .send(Action::Error(format!("Failed to draw: {:?}", e)))

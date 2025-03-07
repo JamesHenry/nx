@@ -4,7 +4,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
-
+use crate::native::tui::app::AppState;
 use super::{
     action::Action,
     tui::{Event, Frame},
@@ -45,7 +45,7 @@ pub trait Component: Any + Send {
     fn update(&mut self, action: Action) -> Result<Option<Action>> {
         Ok(None)
     }
-    fn draw(&mut self, f: &mut Frame<'_>, rect: Rect) -> Result<()>;
+    fn draw(&mut self, f: &mut Frame<'_>, rect: Rect, app_state: &AppState) -> Result<()>;
 
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;

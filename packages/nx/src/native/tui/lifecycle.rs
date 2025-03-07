@@ -112,12 +112,12 @@ pub struct TaskMetadata {
 
 #[napi]
 #[derive(Clone)]
-pub struct AppLifeCycle {
-    app: Arc<Mutex<App>>,
+pub struct AppLifeCycle<'a> {
+    app: Arc<Mutex<App<'a>>>,
 }
 
 #[napi]
-impl AppLifeCycle {
+impl AppLifeCycle<'_> {
     #[napi(constructor)]
     pub fn new(
         _project_names: Vec<String>,
