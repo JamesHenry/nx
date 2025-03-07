@@ -350,6 +350,8 @@ export interface TaskResult {
   status: string
   code: number
   terminalOutput?: string
+  startTime?: number
+  endTime?: number
 }
 
 export interface TaskRun {
