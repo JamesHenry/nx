@@ -1,3 +1,9 @@
+use super::pagination::Pagination;
+use super::task_selection_manager::TaskSelectionManager;
+use super::terminal_pane::{TerminalPane, TerminalPaneData};
+use super::{help_text::HelpText, terminal_pane::TerminalPaneState};
+use crate::native::tui::app::AppState;
+use crate::native::tui::utils::sort_task_items;
 use crate::native::tui::{
     action::Action,
     app::Focus,
@@ -17,12 +23,7 @@ use ratatui::{
 };
 use std::any::Any;
 use std::io;
-
-use super::pagination::Pagination;
-use super::task_selection_manager::TaskSelectionManager;
-use super::terminal_pane::{TerminalPane, TerminalPaneData};
-use super::{help_text::HelpText, terminal_pane::TerminalPaneState};
-use crate::native::tui::utils::sort_task_items;
+use tracing::debug;
 
 const CACHE_STATUS_LOCAL_KEPT_EXISTING: &str = "Kept Existing";
 const CACHE_STATUS_LOCAL: &str = "Local";
@@ -635,7 +636,7 @@ impl TasksList {
     }
 
     /// Handles window resize events by updating PTY dimensions.
-    pub fn handle_resize(&mut self, width: u16, height: u16) -> io::Result<()> {
+    pub fn handle_resize(&mut self, width: u16, height: u16, app_state: &mut AppState) -> io::Result<()> {
         let output_area = if self.has_visible_panes() {
             let width = (width / 3) * 2; // Two-thirds of width for PTY panes
             Rect::new(0, 0, width, height)
@@ -651,7 +652,8 @@ impl TasksList {
                 if let Some(task) = self.tasks.iter_mut().find(|t| t.name == *task_name) {
                     let mut terminal_pane = TerminalPane::new()
                         .task_name(task.name.clone())
-                        .pty_data(&mut self.terminal_pane_data[pane_idx]);
+                        .pty_data(&mut self.terminal_pane_data[pane_idx])
+                        .parser_and_writer(app_state.pseudo_terminals.get_mut(&task.name));
 
                     // Update PTY data and handle resize
                     if terminal_pane.handle_resize(output_area)? {
@@ -922,7 +924,7 @@ impl TasksList {
 }
 
 impl Component for TasksList {
-    fn draw(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+    fn draw(&mut self, f: &mut Frame<'_>, area: Rect, app_state: &mut AppState) -> Result<()> {
         // Determine if we should use collapsed mode based on viewport width
         let collapsed_mode = self.has_visible_panes() || area.width < 100;
 
@@ -1529,6 +1531,7 @@ impl Component for TasksList {
                                 let terminal_pane = TerminalPane::new()
                                     .task_name(task.name.clone())
                                     .pty_data(&mut terminal_pane_data)
+                                    .parser_and_writer(app_state.pseudo_terminals.get_mut(&task.name))
                                     .focused(is_focused)
                                     .continuous(task.continuous);
 
@@ -1563,6 +1566,7 @@ impl Component for TasksList {
                             let terminal_pane = TerminalPane::new()
                                 .task_name(task.name.clone())
                                 .pty_data(&mut terminal_pane_data)
+                                .parser_and_writer(app_state.pseudo_terminals.get_mut(&task.name))
                                 .focused(is_focused)
                                 .continuous(task.continuous);
 
@@ -1600,6 +1604,7 @@ impl Component for TasksList {
                                 let terminal_pane = TerminalPane::new()
                                     .task_name(task.name.clone())
                                     .pty_data(&mut terminal_pane_data)
+                                    .parser_and_writer(app_state.pseudo_terminals.get_mut(&task.name))
                                     .focused(is_focused)
                                     .continuous(task.continuous);
 
@@ -1629,13 +1634,13 @@ impl Component for TasksList {
 
     /// Updates the component state in response to an action.
     /// Returns an optional follow-up action.
-    fn update(&mut self, action: Action) -> Result<Option<Action>> {
+    fn update(&mut self, action: Action, app_state: &mut AppState) -> Result<Option<Action>> {
         match action {
             Action::Tick => {
                 self.throbber_counter = self.throbber_counter.wrapping_add(1);
             }
             Action::Resize(w, h) => {
-                self.handle_resize(w, h)?;
+                self.handle_resize(w, h, app_state)?;
             }
             Action::EnterFilterMode => {
                 if self.filter_mode {

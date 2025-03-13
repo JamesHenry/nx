@@ -35,7 +35,7 @@ import { workspaceRoot } from '../utils/workspace-root';
 import { output } from '../utils/output';
 import { combineOptionsForExecutor } from '../utils/params';
 import { NxJsonConfiguration } from '../config/nx-json';
-import type { TaskDetails } from '../native';
+import { AppLifeCycle, TaskDetails } from '../native';
 import { NoopChildProcess } from './running-tasks/noop-child-process';
 import { RunningTask } from './running-tasks/running-task';
 import { NxArgs } from '../utils/command-line-utils';
@@ -492,7 +492,8 @@ export class TaskOrchestrator {
 
         if (
           useTui &&
-          typeof this.options.lifeCycle.__runCommandsForTask !== 'function'
+          typeof (this.options.lifeCycle as AppLifeCycle)
+            .__runCommandsForTask !== 'function'
         ) {
           throw new Error('Incorrect lifeCycle applied for NX_TUI');
         }
@@ -500,10 +501,9 @@ export class TaskOrchestrator {
         const runningTask =
           // Run the command directly in Rust if the task is continuous and has a single command
           useTui && task.continuous && runCommandsOptions.commands?.length === 1
-            ? await this.options.lifeCycle.__runCommandsForTask(
-                task,
-                runCommandsOptions
-              )
+            ? await (
+                this.options.lifeCycle as AppLifeCycle
+              ).__runCommandsForTask(task, runCommandsOptions)
             : // Currently always run in JS if there are multiple commands defined for a single task, or if not continuous
               await runCommands(runCommandsOptions, {
                 root: workspaceRoot, // only root is needed in runCommands
@@ -546,9 +546,15 @@ export class TaskOrchestrator {
         streamOutput
       );
 
-      if (runningTask instanceof PseudoTtyProcess) {
+      if (
+        process.env.NX_TUI === 'true' &&
+        runningTask instanceof PseudoTtyProcess
+      ) {
         // This is an external of a the pseudo terminal where a task is running and can be passed to the TUI
-        runningTask.rustPseudoTerminal.getPseudoTerminal();
+        (this.options.lifeCycle as AppLifeCycle).registerRunningTask(
+          task.id,
+          runningTask.getParserAndWriter()
+        );
       }
 
       return runningTask;

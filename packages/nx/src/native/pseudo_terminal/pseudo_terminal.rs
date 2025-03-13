@@ -33,7 +33,8 @@ pub struct PseudoTerminal {
     pub printing_rx: Receiver<()>,
     pub quiet: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
-    pub parser: Arc<RwLock<Parser>>,
+    pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    pub parser: ParserArc,
 }
 
 pub struct PseudoTerminalOptions {
@@ -51,6 +52,9 @@ impl Default for PseudoTerminalOptions {
     }
 }
 
+pub type ParserArc = Arc<RwLock<Parser>>;
+pub type WriterArc = Arc<Mutex<Box<dyn Write + Send>>>;
+
 impl PseudoTerminal {
     pub fn new(options: PseudoTerminalOptions) -> Result<Self> {
         let quiet = Arc::new(AtomicBool::new(true));
@@ -67,17 +71,19 @@ impl PseudoTerminal {
             pixel_height: 0,
         })?;
 
-        let mut writer = pty_pair.master.take_writer()?;
-        if options.passthrough_stdin && std::io::stdout().is_tty() {
-            // Stdin -> pty stdin
-            trace!("Passing through stdin");
-            std::thread::spawn(move || {
-                let mut stdin = std::io::stdin();
-                if let Err(e) = os::write_to_pty(&mut stdin, &mut writer) {
-                    trace!("Error writing to pty: {:?}", e);
-                }
-            });
-        }
+        let writer = pty_pair.master.take_writer()?;
+        let writer_arc = Arc::new(Mutex::new(writer));
+      // let writer_clone = writer_arc.clone();
+      //   if options.passthrough_stdin && std::io::stdout().is_tty() {
+      //       // Stdin -> pty stdin
+      //       trace!("Passing through stdin");
+      //       std::thread::spawn(move || {
+      //           let mut stdin = std::io::stdin();
+      //           if let Err(e) = os::write_to_pty(&mut stdin, &mut writer_clone.lock().unwrap()) {
+      //               trace!("Error writing to pty: {:?}", e);
+      //           }
+      //       });
+      //   }
 
         let mut reader = pty_pair.master.try_clone_reader()?;
         let (message_tx, message_rx) = unbounded();
@@ -93,6 +99,7 @@ impl PseudoTerminal {
             let mut buf = [0; 8 * 1024];
             let mut first: bool = true;
 
+            // let mut processed_buf = Vec::new();
             'read_loop: loop {
                 if let Ok(len) = reader.read(&mut buf) {
                     if len == 0 {
@@ -103,11 +110,47 @@ impl PseudoTerminal {
                         .ok();
                     let quiet = quiet_clone.load(Ordering::Relaxed);
                     trace!("Quiet: {}", quiet);
+                    let contains_clear = buf[..len]
+                        .windows(4)
+                        .any(|window| window == [0x1B, 0x5B, 0x32, 0x4A]);
+                    debug!("Contains clear: {}", contains_clear);
+                    debug!("Read {} bytes", len);
                     if let Ok(mut parser) = parser_clone.write() {
                         let prev = parser.screen().clone();
-                        parser.process(&buf[0..len]);
+
+
+                        // // Check if this buffer contains a clear screen sequence
+                        // let contains_clear = buf[..len]
+                        //     .windows(4)
+                        //     .any(|window| window == [0x1B, 0x5B, 0x32, 0x4A]);
+                        //
+                        // if contains_clear {
+                        //     // If we detect a clear screen sequence, start fresh
+                        //     processed_buf.clear();
+                        //     processed_buf.extend_from_slice(&buf[..len]);
+                        //
+                        //     let mut parser = parser_clone.write().unwrap();
+                        //     // Get current dimensions
+                        //     let (rows, cols) = parser.screen().size();
+                        //     // Create a fresh parser
+                        //     let mut new_parser = Parser::new(rows, cols, 10000);
+                        //     // Process just this buffer
+                        //     new_parser.process(&processed_buf);
+                        //     *parser = new_parser;
+                        // } else {
+                        //     // Normal processing
+                        //     processed_buf.extend_from_slice(&buf[..len]);
+                        //     let mut parser = parser_clone.write().unwrap();
+                        //     parser.process(&processed_buf);
+                        // }
+                        //
+                        // processed_buf.clear();
+
+                        parser.process(&buf[..len]);
+                        debug!("{}", parser.get_raw_output().len());
+
                         let write_buf = if first {
-                            parser.screen().all_contents_formatted()
+                            parser.screen().contents_formatted()
                         } else {
                             parser.screen().contents_diff(&prev)
                         };
@@ -146,6 +189,7 @@ impl PseudoTerminal {
         });
         Ok(PseudoTerminal {
             quiet,
+            writer: writer_arc,
             running,
             parser,
             pty_pair,
@@ -244,6 +288,8 @@ impl PseudoTerminal {
 
         trace!("Returning ChildProcess");
         Ok(ChildProcess::new(
+            self.parser.clone(),
+            self.writer.clone(),
             process_killer,
             self.message_rx.clone(),
             exit_to_process_rx,

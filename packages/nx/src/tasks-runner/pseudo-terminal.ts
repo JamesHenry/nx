@@ -198,6 +198,10 @@ export class PseudoTtyProcess {
       }
     }
   }
+
+  getParserAndWriter() {
+    return this.childProcess.getParserAndWriter();
+  }
 }
 
 export class PseudoTtyProcessWithSend extends PseudoTtyProcess {

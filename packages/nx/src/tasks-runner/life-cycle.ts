@@ -1,7 +1,8 @@
 import { Task } from '../config/task-graph';
-import { RunCommandsOptions } from '../executors/run-commands/run-commands.impl';
+import { ExternalObject } from '../native';
 import { RunningTask } from './running-tasks/running-task';
 import { TaskStatus } from './tasks-runner';
+import { RunCommandsOptions } from 'nx/src/executors/run-commands/run-commands.impl';
 
 /**
  * The result of a completed {@link Task}
@@ -26,7 +27,9 @@ export interface TaskMetadata {
 
 interface RustRunningTask extends RunningTask {
   getResults(): Promise<{ code: number; terminalOutput: string }>;
+
   onExit(cb: (code: number, terminalOutput: string) => void): void;
+
   kill(signal?: NodeJS.Signals | number): Promise<void> | void;
 }
 
@@ -68,6 +71,11 @@ export interface LifeCycle {
     task: Task,
     options: RunCommandsOptions
   ): Promise<RustRunningTask>;
+
+  registerRunningTask?(
+    taskId: string,
+    parserAndWriter: ExternalObject<[ParserArc, WriterArc]>
+  );
 }
 
 export class CompositeLifeCycle implements LifeCycle {
@@ -164,5 +172,16 @@ export class CompositeLifeCycle implements LifeCycle {
       );
     }
     throw new Error('No life cycle with __runCommandsForTask found');
+  }
+
+  async registerRunningTask(
+    taskId: string,
+    parserAndWriter: ExternalObject<any>
+  ): Promise<RustRunningTask> {
+    for (let l of this.lifeCycles) {
+      if (l.registerRunningTask) {
+        return await l.registerRunningTask(taskId, parserAndWriter);
+      }
+    }
   }
 }

@@ -126,7 +126,9 @@ export class ForkedProcessTaskRunner {
     }
   ): Promise<RunningTask | PseudoTtyProcess> {
     const shouldPrefix =
-      streamOutput && process.env.NX_PREFIX_OUTPUT === 'true';
+      streamOutput &&
+      process.env.NX_PREFIX_OUTPUT === 'true' &&
+      process.env.NX_TUI !== 'true';
 
     // streamOutput would be false if we are running multiple targets
     // there's no point in running the commands in a pty if we are not streaming the output
