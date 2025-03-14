@@ -26,11 +26,6 @@ impl RustPseudoTerminal {
     }
 
     #[napi]
-    pub fn get_pseudo_terminal(&self) -> napi::Result<External<&PseudoTerminal>> {
-        Ok(External::new(&self.pseudo_terminal))
-    }
-
-    #[napi]
     pub fn run_command(
         &mut self,
         command: String,

@@ -2,7 +2,7 @@ import { Task } from '../config/task-graph';
 import { ExternalObject } from '../native';
 import { RunningTask } from './running-tasks/running-task';
 import { TaskStatus } from './tasks-runner';
-import { RunCommandsOptions } from 'nx/src/executors/run-commands/run-commands.impl';
+import { RunCommandsOptions } from '../executors/run-commands/run-commands.impl';
 
 /**
  * The result of a completed {@link Task}
@@ -67,14 +67,9 @@ export interface LifeCycle {
     output: string
   ): void;
 
-  __runCommandsForTask?(
-    task: Task,
-    options: RunCommandsOptions
-  ): Promise<RustRunningTask>;
-
   registerRunningTask?(
     taskId: string,
-    parserAndWriter: ExternalObject<[ParserArc, WriterArc]>
+    parserAndWriter: ExternalObject<[any, any]>
   );
 }
 
@@ -154,24 +149,6 @@ export class CompositeLifeCycle implements LifeCycle {
         l.printTaskTerminalOutput(task, status, output);
       }
     }
-  }
-
-  async __runCommandsForTask(
-    task: Task,
-    options: RunCommandsOptions
-  ): Promise<RustRunningTask> {
-    // This is clunky...
-    // We have to assume there is is only one life cycle with __runCommandsForTask
-    const lifeCycleWithRunCommandsForTask = this.lifeCycles.find(
-      (l) => l.__runCommandsForTask
-    );
-    if (lifeCycleWithRunCommandsForTask) {
-      return await lifeCycleWithRunCommandsForTask.__runCommandsForTask(
-        task,
-        options
-      );
-    }
-    throw new Error('No life cycle with __runCommandsForTask found');
   }
 
   async registerRunningTask(

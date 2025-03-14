@@ -4,8 +4,8 @@ import { relative } from 'path';
 import { writeFileSync } from 'fs';
 import { TaskHasher } from '../hasher/task-hasher';
 import {
-  runCommands,
   normalizeOptions,
+  runCommands,
 } from '../executors/run-commands/run-commands.impl';
 import { ForkedProcessTaskRunner } from './forked-process-task-runner';
 import { Cache, DbCache, getCache } from './cache';
@@ -40,6 +40,7 @@ import { NoopChildProcess } from './running-tasks/noop-child-process';
 import { RunningTask } from './running-tasks/running-task';
 import { NxArgs } from '../utils/command-line-utils';
 import { PseudoTtyProcess } from './pseudo-terminal';
+import { TUI_ENABLED } from './tui-enabled';
 
 export class TaskOrchestrator {
   private taskDetails: TaskDetails | null = getTaskDetails();
@@ -74,6 +75,7 @@ export class TaskOrchestrator {
   private runningContinuousTasks = new Map<string, RunningTask>();
 
   private cleaningUp = false;
+
   // endregion internal state
 
   constructor(
@@ -484,41 +486,48 @@ export class TaskOrchestrator {
             this.runningContinuousTasks.size === 0,
           streamOutput,
         };
-        const useTui = process.env.NX_TUI === 'true';
-        if (useTui) {
+        if (TUI_ENABLED) {
           // Preprocess options on the JS side before sending to Rust
           runCommandsOptions = normalizeOptions(runCommandsOptions);
         }
 
-        if (
-          useTui &&
-          typeof (this.options.lifeCycle as AppLifeCycle)
-            .__runCommandsForTask !== 'function'
-        ) {
-          throw new Error('Incorrect lifeCycle applied for NX_TUI');
+        const runningTask = await runCommands(runCommandsOptions, {
+          root: workspaceRoot, // only root is needed in runCommands
+        } as any);
+
+        if (TUI_ENABLED && runningTask instanceof PseudoTtyProcess) {
+          // This is an external of a the pseudo terminal where a task is running and can be passed to the TUI
+          this.options.lifeCycle.registerRunningTask(
+            task.id,
+            runningTask.getParserAndWriter()
+          );
         }
 
-        const runningTask =
-          // Run the command directly in Rust if the task is continuous and has a single command
-          useTui && task.continuous && runCommandsOptions.commands?.length === 1
-            ? await (
-                this.options.lifeCycle as AppLifeCycle
-              ).__runCommandsForTask(task, runCommandsOptions)
-            : // Currently always run in JS if there are multiple commands defined for a single task, or if not continuous
-              await runCommands(runCommandsOptions, {
-                root: workspaceRoot, // only root is needed in runCommands
-              } as any);
-
-        runningTask.onExit((code, terminalOutput) => {
-          if (!streamOutput) {
-            this.options.lifeCycle.printTaskTerminalOutput(
-              task,
-              code === 0 ? 'success' : 'failure',
-              terminalOutput
-            );
-            writeFileSync(temporaryOutputPath, terminalOutput);
+        if (!streamOutput) {
+          if (runningTask instanceof PseudoTtyProcess) {
+            let terminalOutput = '';
+            runningTask.onOutput((data) => {
+              terminalOutput += data;
+            });
+            runningTask.onExit((code) => {
+              this.options.lifeCycle.printTaskTerminalOutput(
+                task,
+                code === 0 ? 'success' : 'failure',
+                terminalOutput
+              );
+              writeFileSync(temporaryOutputPath, terminalOutput);
+            });
+          } else {
+            runningTask.onExit((code, terminalOutput) => {
+              this.options.lifeCycle.printTaskTerminalOutput(
+                task,
+                code === 0 ? 'success' : 'failure',
+                terminalOutput
+              );
+              writeFileSync(temporaryOutputPath, terminalOutput);
+            });
           }
-        });
+        }
 
         return runningTask;
       } catch (e) {
@@ -529,6 +538,10 @@ export class TaskOrchestrator {
         }
         const terminalOutput = e.stack ?? e.message ?? '';
         writeFileSync(temporaryOutputPath, terminalOutput);
+        return new NoopChildProcess({
+          code: 1,
+          terminalOutput,
+        });
       }
     } else if (targetConfiguration.executor === 'nx:noop') {
       writeFileSync(temporaryOutputPath, '');
@@ -546,12 +559,9 @@ export class TaskOrchestrator {
         streamOutput
       );
 
-      if (
-        process.env.NX_TUI === 'true' &&
-        runningTask instanceof PseudoTtyProcess
-      ) {
+      if (TUI_ENABLED && runningTask instanceof PseudoTtyProcess) {
         // This is an external of a the pseudo terminal where a task is running and can be passed to the TUI
-        (this.options.lifeCycle as AppLifeCycle).registerRunningTask(
+        this.options.lifeCycle.registerRunningTask(
           task.id,
           runningTask.getParserAndWriter()
         );
@@ -572,7 +582,8 @@ export class TaskOrchestrator {
       const usePtyFork = process.env.NX_NATIVE_COMMAND_RUNNER !== 'false';
 
       // Disable the pseudo terminal if this is a run-many or when running a continuous task as part of a run-one
-      const disablePseudoTerminal = !this.initiatingProject || task.continuous;
+      const disablePseudoTerminal =
+        !TUI_ENABLED && (!this.initiatingProject || task.continuous);
       // execution
       const childProcess = usePtyFork
         ? await this.forkedProcessTaskRunner.forkProcess(task, {

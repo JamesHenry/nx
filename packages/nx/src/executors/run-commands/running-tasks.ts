@@ -5,7 +5,6 @@ import {
   LARGE_BUFFER,
   NormalizedRunCommandsOptions,
   RunCommandsCommandOptions,
-  RunCommandsOptions,
 } from './run-commands.impl';
 import {
   PseudoTerminal,
@@ -204,11 +203,9 @@ export class SeriallyRunningTasks implements RunningTask {
     for (const c of options.commands) {
       const childProcess = await this.createProcess(
         c,
-        [],
         options.color,
         calculateCwd(options.cwd, context),
         options.processEnv ?? options.env ?? {},
-        false,
         options.usePty,
         options.streamOutput,
         options.tty,
@@ -235,11 +232,9 @@ export class SeriallyRunningTasks implements RunningTask {
 
   private async createProcess(
     commandConfig: RunCommandsCommandOptions,
-    readyWhenStatus: { stringToMatch: string; found: boolean }[] = [],
     color: boolean,
     cwd: string,
     env: Record<string, string>,
-    isParallel: boolean,
     usePty: boolean = true,
     streamOutput: boolean = true,
     tty: boolean,
@@ -251,8 +246,6 @@ export class SeriallyRunningTasks implements RunningTask {
       this.pseudoTerminal &&
       process.env.NX_NATIVE_COMMAND_RUNNER !== 'false' &&
       !commandConfig.prefix &&
-      readyWhenStatus.length === 0 &&
-      !isParallel &&
       usePty
     ) {
       return createProcessWithPseudoTty(
@@ -272,7 +265,7 @@ export class SeriallyRunningTasks implements RunningTask {
       color,
       cwd,
       env,
-      readyWhenStatus,
+      [],
       streamOutput,
       envFile
     );
@@ -393,14 +386,26 @@ class RunningNodeProcess implements RunningTask {
   }
 }
 
+export function runSingleCommandWithPseudoTerminal(
+  normalized: NormalizedRunCommandsOptions,
+  context: ExecutorContext,
+  pseudoTerminal: PseudoTerminal
+) {
+  return createProcessWithPseudoTty(
+    pseudoTerminal,
+    normalized.commands[0],
+    normalized.color,
+    calculateCwd(normalized.cwd, context),
+    normalized.env,
+    normalized.streamOutput,
+    pseudoTerminal ? normalized.isTTY : false,
+    normalized.envFile
+  );
+}
+
 async function createProcessWithPseudoTty(
   pseudoTerminal: PseudoTerminal,
-  commandConfig: {
-    command: string;
-    color?: string;
-    bgColor?: string;
-    prefix?: string;
-  },
+  commandConfig: RunCommandsCommandOptions,
   color: boolean,
   cwd: string,
   env: Record<string, string>,

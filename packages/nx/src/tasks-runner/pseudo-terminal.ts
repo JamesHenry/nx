@@ -39,10 +39,6 @@ export class PseudoTerminal {
     this.initialized = true;
   }
 
-  getPseudoTerminal() {
-    return this.rustPseudoTerminal.getPseudoTerminal();
-  }
-
   runCommand(
     command: string,
     {
