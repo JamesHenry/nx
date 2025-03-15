@@ -14,11 +14,13 @@ export declare class AppLifeCycle {
   printTaskTerminalOutput(task: Task, status: string, output: string): void
   endTasks(taskResults: Array<TaskResult>, metadata: TaskMetadata): void
   __init(doneCallback: () => any): void
+  registerRunningTask(taskId: string, parserAndWriter: ExternalObject<[ParserArc, WriterArc]>): void
   __setCloudMessage(message: string): Promise<void>
   __runCommandsForTask(task: Task, options: NormalizedRunCommandsOptions): Promise<RunningTask>
 }
 
 export declare class ChildProcess {
+  getParserAndWriter(): ExternalObject<[ParserArc, WriterArc]>
   kill(): void
   onExit(callback: (message: string) => void): void
   onOutput(callback: (message: string) => void): void
@@ -291,6 +293,8 @@ export declare export function restoreTerminal(): void
 export interface RuntimeInput {
   runtime: string
 }
+
+export declare export function showInfoAboutParser(terminal: ExternalObject<PseudoTerminal>): void
 
 export interface Target {
   executor?: string

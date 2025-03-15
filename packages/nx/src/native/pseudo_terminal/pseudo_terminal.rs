@@ -1,3 +1,15 @@
+use anyhow::anyhow;
+use crossbeam_channel::{bounded, unbounded, Receiver};
+use crossterm::{
+    terminal,
+    terminal::{disable_raw_mode, enable_raw_mode},
+    tty::IsTty,
+};
+use napi::bindgen_prelude::*;
+use nom::AsBytes;
+use portable_pty::{CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
+use std::io::stdout;
+use std::sync::{Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
     env,
@@ -8,18 +20,9 @@ use std::{
     },
     time::Instant,
 };
-
-use anyhow::anyhow;
-use crossbeam_channel::{bounded, unbounded, Receiver};
-use crossterm::{
-    terminal,
-    terminal::{disable_raw_mode, enable_raw_mode},
-    tty::IsTty,
-};
-use napi::bindgen_prelude::*;
-use portable_pty::{CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
+use tracing::debug;
 use tracing::log::trace;
-use vt100_ctt::Parser;
+use vt100_ctt::{Parser, Screen};
 
 use super::os;
 use crate::native::pseudo_terminal::child_process::ChildProcess;
@@ -30,6 +33,8 @@ pub struct PseudoTerminal {
     pub printing_rx: Receiver<()>,
     pub quiet: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
+    pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    pub parser: ParserArc,
 }
 
 pub struct PseudoTerminalOptions {
@@ -39,13 +44,16 @@ pub struct PseudoTerminalOptions {
 
 impl Default for PseudoTerminalOptions {
     fn default() -> Self {
-        let (w, h) = terminal::size().unwrap_or((80, 24));
+        let (w, h) = terminal::size().unwrap();
         Self {
             size: (w, h),
             passthrough_stdin: !env::var("NX_TUI").is_ok_and(|s| s == "true"),
         }
     }
 }
+
+pub type ParserArc = Arc<RwLock<Parser>>;
+pub type WriterArc = Arc<Mutex<Box<dyn Write + Send>>>;
 
 impl PseudoTerminal {
     pub fn new(options: PseudoTerminalOptions) -> Result<Self> {
@@ -63,17 +71,19 @@ impl PseudoTerminal {
             pixel_height: 0,
         })?;
 
-        let mut writer = pty_pair.master.take_writer()?;
-        if options.passthrough_stdin && std::io::stdout().is_tty() {
-            // Stdin -> pty stdin
-            trace!("Passing through stdin");
-            std::thread::spawn(move || {
-                let mut stdin = std::io::stdin();
-                if let Err(e) = os::write_to_pty(&mut stdin, &mut writer) {
-                    trace!("Error writing to pty: {:?}", e);
-                }
-            });
-        }
+        let writer = pty_pair.master.take_writer()?;
+        let writer_arc = Arc::new(Mutex::new(writer));
+      // let writer_clone = writer_arc.clone();
+      //   if options.passthrough_stdin && std::io::stdout().is_tty() {
+      //       // Stdin -> pty stdin
+      //       trace!("Passing through stdin");
+      //       std::thread::spawn(move || {
+      //           let mut stdin = std::io::stdin();
+      //           if let Err(e) = os::write_to_pty(&mut stdin, &mut writer_clone.lock().unwrap()) {
+      //               trace!("Error writing to pty: {:?}", e);
+      //           }
+      //       });
+      //   }
 
         let mut reader = pty_pair.master.try_clone_reader()?;
         let (message_tx, message_rx) = unbounded();
@@ -81,12 +91,15 @@ impl PseudoTerminal {
         // Output -> stdout handling
         let quiet_clone = quiet.clone();
         let running_clone = running.clone();
+
+        let parser = Arc::new(RwLock::new(Parser::new(h, w, 10000)));
+        let parser_clone = parser.clone();
         std::thread::spawn(move || {
             let mut stdout = std::io::stdout();
             let mut buf = [0; 8 * 1024];
-            let mut parser = Parser::new(h, w, 10000);
             let mut first: bool = true;
 
+            // let mut processed_buf = Vec::new();
             'read_loop: loop {
                 if let Ok(len) = reader.read(&mut buf) {
                     if len == 0 {
@@ -97,35 +110,74 @@ impl PseudoTerminal {
                         .ok();
                     let quiet = quiet_clone.load(Ordering::Relaxed);
                     trace!("Quiet: {}", quiet);
-                    if !quiet {
+                    let contains_clear = buf[..len]
+                        .windows(4)
+                        .any(|window| window == [0x1B, 0x5B, 0x32, 0x4A]);
+                    debug!("Contains clear: {}", contains_clear);
+                    debug!("Read {} bytes", len);
+                    if let Ok(mut parser) = parser_clone.write() {
                         let prev = parser.screen().clone();
-                        parser.process(&buf[0..len]);
+
+
+                        // // Check if this buffer contains a clear screen sequence
+                        // let contains_clear = buf[..len]
+                        //     .windows(4)
+                        //     .any(|window| window == [0x1B, 0x5B, 0x32, 0x4A]);
+                        //
+                        // if contains_clear {
+                        //     // If we detect a clear screen sequence, start fresh
+                        //     processed_buf.clear();
+                        //     processed_buf.extend_from_slice(&buf[..len]);
+                        //
+                        //     let mut parser = parser_clone.write().unwrap();
+                        //     // Get current dimensions
+                        //     let (rows, cols) = parser.screen().size();
+                        //     // Create a fresh parser
+                        //     let mut new_parser = Parser::new(rows, cols, 10000);
+                        //     // Process just this buffer
+                        //     new_parser.process(&processed_buf);
+                        //     *parser = new_parser;
+                        // } else {
+                        //     // Normal processing
+                        //     processed_buf.extend_from_slice(&buf[..len]);
+                        //     let mut parser = parser_clone.write().unwrap();
+                        //     parser.process(&processed_buf);
+                        // }
+                        //
+                        // processed_buf.clear();
+
+                        parser.process(&buf[..len]);
+                        debug!("{}", parser.get_raw_output().len());
+
                         let write_buf = if first {
-                            parser.screen().all_contents_formatted()
+                            parser.screen().contents_formatted()
                         } else {
                             parser.screen().contents_diff(&prev)
                         };
                         first = false;
-
-                        let mut logged_interrupted_error = false;
-                        while let Err(e) = stdout.write_all(&write_buf) {
-                            match e.kind() {
-                                std::io::ErrorKind::Interrupted => {
-                                    if !logged_interrupted_error {
-                                        trace!("Interrupted error writing to stdout: {:?}", e);
-                                        logged_interrupted_error = true;
+                        if !quiet {
+                            let mut logged_interrupted_error = false;
+                            while let Err(e) = stdout.write_all(&write_buf) {
+                                match e.kind() {
+                                    std::io::ErrorKind::Interrupted => {
+                                        if !logged_interrupted_error {
+                                            trace!("Interrupted error writing to stdout: {:?}", e);
+                                            logged_interrupted_error = true;
+                                        }
+                                        continue;
                                     }
-                                    continue;
-                                }
-                                _ => {
-                                    // We should figure out what to do for more error types as they appear.
-                                    trace!("Error writing to stdout: {:?}", e);
-                                    trace!("Error kind: {:?}", e.kind());
-                                    break 'read_loop;
+                                    _ => {
+                                        // We should figure out what to do for more error types as they appear.
+                                        trace!("Error writing to stdout: {:?}", e);
+                                        trace!("Error kind: {:?}", e.kind());
+                                        break 'read_loop;
+                                    }
                                 }
                             }
+                            let _ = stdout.flush();
                         }
-                        let _ = stdout.flush();
+                    } else {
+                        println!("Failed to lock parser");
                     }
                 }
                 if !running_clone.load(Ordering::SeqCst) {
@@ -137,11 +189,17 @@ impl PseudoTerminal {
         });
         Ok(PseudoTerminal {
             quiet,
+            writer: writer_arc,
             running,
+            parser,
             pty_pair,
             message_rx,
             printing_rx,
         })
+    }
+
+    pub fn get_screen(&self) -> Arc<RwLock<Parser>> {
+        self.parser.clone()
     }
 
     pub fn default() -> Result<PseudoTerminal> {
@@ -190,6 +248,9 @@ impl PseudoTerminal {
         }
         let process_killer = child.clone_killer();
 
+        // Create a direct handle to kill the process when Ctrl+C is detected
+        let mut direct_killer = process_killer.clone_killer(); // Clone the killer for the monitoring thread
+
         trace!("Getting running clone");
         let running_clone = self.running.clone();
         trace!("Getting printing_rx clone");
@@ -228,12 +289,74 @@ impl PseudoTerminal {
             };
         });
 
+        // Save the killer in the struct for use with Ctrl+C detection
+        let writer_clone = self.writer.clone();
+        let running_clone2 = self.running.clone();
+        
+        // This is the thread that reads from the process
+        // We'll modify it to look for Ctrl+C
+        std::thread::spawn(move || {
+            trace!("Starting input monitoring thread for Ctrl+C detection");
+            let mut buffer = [0u8; 1024];
+            let mut reader = std::io::stdin();
+            
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(n) if n > 0 => {
+                        // Check for Ctrl+C (ASCII 3)
+                        if buffer[..n].contains(&3) {
+                            trace!("Detected Ctrl+C in stdin, killing process");
+                            
+                            // Kill the process directly - first close connections
+                            let _ = direct_killer.kill();
+                            
+                            // Also send a Ctrl+C to the process explicitly via writer
+                            if let Ok(mut writer) = writer_clone.lock() {
+                                let _ = writer.write_all(&[3]);
+                                let _ = writer.flush();
+                                trace!("Sent Ctrl+C to process via writer");
+                            }
+                            
+                            // Mark the process as not running
+                            running_clone2.store(false, Ordering::SeqCst);
+                            
+                            break;
+                        }
+                    },
+                    _ => {
+                        // Error or EOF, just yield briefly and continue
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+                
+                // Also check if the process has stopped running
+                if !running_clone2.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+            
+            trace!("Input monitoring thread exiting");
+        });
+
         trace!("Returning ChildProcess");
         Ok(ChildProcess::new(
+            self.parser.clone(),
+            self.writer.clone(),
             process_killer,
             self.message_rx.clone(),
             exit_to_process_rx,
         ))
+    }
+}
+
+#[napi]
+pub fn show_info_about_parser(terminal: External<&PseudoTerminal>) {
+    if let Ok(a) = terminal.get_screen().read() {
+        stdout()
+            .write_all(a.screen().contents().as_bytes())
+            .unwrap();
+    } else {
+        println!("Failed to lock parser");
     }
 }
 

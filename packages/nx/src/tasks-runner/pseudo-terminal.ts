@@ -6,6 +6,16 @@ import * as os from 'os';
 
 let pseudoTerminal: PseudoTerminal;
 
+function shutdownPseudoTerminalOnProcessExit() {
+  if (pseudoTerminal) {
+    pseudoTerminal.shutdown();
+  }
+}
+process.on('SIGINT', shutdownPseudoTerminalOnProcessExit);
+process.on('SIGTERM', shutdownPseudoTerminalOnProcessExit);
+process.on('SIGHUP', shutdownPseudoTerminalOnProcessExit);
+process.on('exit', shutdownPseudoTerminalOnProcessExit);
+
 export function getPseudoTerminal(skipSupportCheck: boolean = false) {
   if (!skipSupportCheck && !PseudoTerminal.isSupported()) {
     throw new Error('Pseudo terminal is not supported on this platform.');
@@ -15,8 +25,11 @@ export function getPseudoTerminal(skipSupportCheck: boolean = false) {
   return pseudoTerminal;
 }
 
+let id = 0;
 export class PseudoTerminal {
-  private pseudoIPCPath = getForkedProcessOsSocketPath(process.pid.toString());
+  private pseudoIPCPath = getForkedProcessOsSocketPath(
+    process.pid.toString() + '-' + id++
+  );
   private pseudoIPC = new PseudoIPCServer(this.pseudoIPCPath);
 
   private initialized: boolean = false;
@@ -25,9 +38,7 @@ export class PseudoTerminal {
     return process.stdout.isTTY && supportedPtyPlatform();
   }
 
-  constructor(private rustPseudoTerminal: RustPseudoTerminal) {
-    this.setupProcessListeners();
-  }
+  constructor(private rustPseudoTerminal: RustPseudoTerminal) {}
 
   async init() {
     if (this.initialized) {
@@ -35,6 +46,10 @@ export class PseudoTerminal {
     }
     await this.pseudoIPC.init();
     this.initialized = true;
+  }
+
+  shutdown() {
+    this.shutdownPseudoIPC();
   }
 
   runCommand(
@@ -54,6 +69,7 @@ export class PseudoTerminal {
     } = {}
   ) {
     return new PseudoTtyProcess(
+      this.rustPseudoTerminal,
       this.rustPseudoTerminal.runCommand(
         command,
         cwd,
@@ -84,6 +100,7 @@ export class PseudoTerminal {
       throw new Error('Call init() before forking processes');
     }
     const cp = new PseudoTtyProcessWithSend(
+      this.rustPseudoTerminal,
       this.rustPseudoTerminal.fork(
         id,
         script,
@@ -110,24 +127,6 @@ export class PseudoTerminal {
     this.pseudoIPC.onMessageFromChildren(callback);
   }
 
-  private setupProcessListeners() {
-    const shutdown = () => {
-      this.shutdownPseudoIPC();
-    };
-    process.on('SIGINT', () => {
-      this.shutdownPseudoIPC();
-    });
-    process.on('SIGTERM', () => {
-      this.shutdownPseudoIPC();
-    });
-    process.on('SIGHUP', () => {
-      this.shutdownPseudoIPC();
-    });
-    process.on('exit', () => {
-      this.shutdownPseudoIPC();
-    });
-  }
-
   private shutdownPseudoIPC() {
     if (this.initialized) {
       this.pseudoIPC.close();
@@ -143,7 +142,10 @@ export class PseudoTtyProcess {
 
   private terminalOutput = '';
 
-  constructor(private childProcess: ChildProcess) {
+  constructor(
+    public rustPseudoTerminal: RustPseudoTerminal,
+    private childProcess: ChildProcess
+  ) {
     childProcess.onOutput((output) => {
       this.terminalOutput += output;
       this.outputCallbacks.forEach((cb) => cb(output));
@@ -187,15 +189,20 @@ export class PseudoTtyProcess {
       }
     }
   }
+
+  getParserAndWriter() {
+    return this.childProcess.getParserAndWriter();
+  }
 }
 
 export class PseudoTtyProcessWithSend extends PseudoTtyProcess {
   constructor(
+    public rustPseudoTerminal: RustPseudoTerminal,
     _childProcess: ChildProcess,
     private id: string,
     private pseudoIpc: PseudoIPCServer
   ) {
-    super(_childProcess);
+    super(rustPseudoTerminal, _childProcess);
   }
 
   send(message: Serializable) {

@@ -1,5 +1,9 @@
+use super::tasks_list::TaskStatus;
+use crate::native::pseudo_terminal::pseudo_terminal::{ParserArc, WriterArc};
+use crate::native::tui::pty::PtyInstance;
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use napi::bindgen_prelude::External;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -11,10 +15,8 @@ use ratatui::{
     },
 };
 use std::io;
+use tracing::debug;
 use tui_term::widget::PseudoTerminal;
-
-use super::tasks_list::TaskStatus;
-use crate::native::tui::pty::PtyInstance;
 
 pub struct TerminalPaneData {
     pub pty: Option<PtyInstance>,
@@ -26,6 +28,7 @@ pub struct TerminalPaneData {
 pub struct TerminalPane<'a> {
     task_name: String,
     pty_data: Option<&'a mut TerminalPaneData>,
+    parser_and_writer: Option<&'a mut External<(ParserArc, WriterArc)>>,
     is_focused: bool,
     is_continuous: bool,
 }
@@ -68,23 +71,23 @@ impl TerminalPaneData {
                 }
                 // Handle ctrl+u and ctrl+d for scrolling when not in interactive mode
                 KeyCode::Char('u')
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_interactive =>
-                {
-                    // Scroll up a somewhat arbitrary "chunk" (12 lines)
-                    for _ in 0..12 {
-                        pty.scroll_up();
+                if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_interactive =>
+                    {
+                        // Scroll up a somewhat arbitrary "chunk" (12 lines)
+                        for _ in 0..12 {
+                            pty.scroll_up();
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
                 KeyCode::Char('d')
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_interactive =>
-                {
-                    // Scroll down a somewhat arbitrary "chunk" (12 lines)
-                    for _ in 0..12 {
-                        pty.scroll_down();
+                if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_interactive =>
+                    {
+                        // Scroll down a somewhat arbitrary "chunk" (12 lines)
+                        for _ in 0..12 {
+                            pty.scroll_down();
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
                 // Handle 'c' for copying when not in interactive mode
                 KeyCode::Char('c') if !self.is_interactive => {
                     if let Some(screen) = pty.get_screen() {
@@ -110,11 +113,11 @@ impl TerminalPaneData {
                 }
                 // Handle Ctrl+Z to exit interactive mode
                 KeyCode::Char('z')
-                    if key.modifiers == KeyModifiers::CONTROL && self.is_interactive =>
-                {
-                    self.set_interactive(false);
-                    return Ok(());
-                }
+                if key.modifiers == KeyModifiers::CONTROL && self.is_interactive =>
+                    {
+                        self.set_interactive(false);
+                        return Ok(());
+                    }
                 // Only send input to PTY if we're in interactive mode
                 _ if self.is_interactive => match key.code {
                     KeyCode::Char(c) => {
@@ -157,6 +160,7 @@ impl<'a> TerminalPane<'a> {
         Self {
             task_name: String::new(),
             pty_data: None,
+            parser_and_writer: None,
             is_focused: false,
             is_continuous: false,
         }
@@ -169,6 +173,11 @@ impl<'a> TerminalPane<'a> {
 
     pub fn pty_data(mut self, data: &'a mut TerminalPaneData) -> Self {
         self.pty_data = Some(data);
+        self
+    }
+
+    pub fn parser_and_writer(mut self, parser_and_writer: Option<&'a mut External<(ParserArc, WriterArc)>>) -> Self {
+        self.parser_and_writer = parser_and_writer;
         self
     }
 
@@ -345,6 +354,7 @@ impl<'a> StatefulWidget for TerminalPane<'a> {
 
         // If task hasn't started yet, show pending message
         if matches!(status, TaskStatus::NotStarted) {
+            debug!("Showing terminal pane with pending");
             let message = vec![Line::from(vec![Span::styled(
                 "Task is pending...",
                 Style::default().fg(Color::DarkGray),
@@ -361,13 +371,161 @@ impl<'a> StatefulWidget for TerminalPane<'a> {
 
         let inner_area = block.inner(area);
 
-        if let Some(pty_data) = &self.pty_data {
+        if let Some(parser_and_writer) = &self.parser_and_writer {
+            let (parser, writer) = parser_and_writer.as_ref();
+            let mut parser = parser.write().unwrap();
+            let a = parser.get_raw_output().len();
+
+            debug!("{}", a);
+            let screen = parser.screen_mut();
+            //
+            screen.set_size(inner_area.height, inner_area.width);
+            debug!("Showing terminal pane with parser and writer");
+
+            let viewport_height = inner_area.height;
+            let current_scroll = screen.scrollback();
+
+            let total_content_rows = screen.get_total_content_rows();
+            let scrollable_rows =
+                total_content_rows.saturating_sub(viewport_height as usize);
+            let needs_scrollbar = scrollable_rows > 0;
+
+            // Reset scrollbar state if no scrolling needed
+            state.scrollbar_state = if needs_scrollbar {
+                let position = scrollable_rows.saturating_sub(current_scroll);
+                state
+                    .scrollbar_state
+                    .content_length(scrollable_rows)
+                    .viewport_content_length(viewport_height as usize)
+                    .position(position)
+            } else {
+                ScrollbarState::default()
+            };
+
+            let pseudo_term = PseudoTerminal::new(screen).block(block);
+            Widget::render(pseudo_term, area, buf);
+
+            // Only render scrollbar if needed
+            if needs_scrollbar {
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("↑"))
+                    .end_symbol(Some("↓"))
+                    .style(border_style);
+
+                scrollbar.render(area, buf, &mut state.scrollbar_state);
+            }
+
+            // Show interactive/readonly status for continuous tasks
+            if self.is_focused && self.is_continuous {
+                // Bottom right status
+                let bottom_text = if is_interactive {
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled("<ctrl>+z", Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            " to exit interactive  ",
+                            Style::default().fg(Color::White),
+                        ),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled("i", Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            " to make interactive  ",
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ])
+                };
+
+                let text_width = bottom_text
+                    .spans
+                    .iter()
+                    .map(|span| span.content.len())
+                    .sum::<usize>();
+
+                let bottom_right_area = Rect {
+                    x: area.x + area.width - text_width as u16 - 3,
+                    y: area.y + area.height - 1,
+                    width: text_width as u16 + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(bottom_text)
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(bottom_right_area, buf);
+
+                // Top right status
+                let top_text = if is_interactive {
+                    Line::from(vec![Span::styled(
+                        "  INTERACTIVE  ",
+                        Style::default().fg(Color::White),
+                    )])
+                } else {
+                    Line::from(vec![Span::styled(
+                        "  NON-INTERACTIVE  ",
+                        Style::default().fg(Color::DarkGray),
+                    )])
+                };
+
+                let mode_width = top_text
+                    .spans
+                    .iter()
+                    .map(|span| span.content.len())
+                    .sum::<usize>();
+
+                let top_right_area = Rect {
+                    x: area.x + area.width - mode_width as u16 - 3,
+                    y: area.y,
+                    width: mode_width as u16 + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(top_text)
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(top_right_area, buf);
+            } else if needs_scrollbar {
+                // Render padding for both top and bottom when scrollbar is present
+                let padding_text = Line::from(vec![Span::raw("  ")]);
+                let padding_width = 2;
+
+                // Top padding
+                let top_right_area = Rect {
+                    x: area.x + area.width - padding_width - 3,
+                    y: area.y,
+                    width: padding_width + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(padding_text.clone())
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(top_right_area, buf);
+
+                // Bottom padding
+                let bottom_right_area = Rect {
+                    x: area.x + area.width - padding_width - 3,
+                    y: area.y + area.height - 1,
+                    width: padding_width + 2,
+                    height: 1,
+                };
+
+                Paragraph::new(padding_text)
+                    .alignment(Alignment::Right)
+                    .style(border_style)
+                    .render(bottom_right_area, buf);
+            }
+        } else if let Some(pty_data) = &self.pty_data {
             if let Some(pty) = &pty_data.pty {
                 if let Some(screen) = pty.get_screen() {
+                    debug!("Showing terminal pane with pty");
                     let viewport_height = inner_area.height;
-                    let current_scroll = pty.get_scroll_offset();
+                    let current_scroll = screen.scrollback();
 
-                    let total_content_rows = pty.get_total_content_rows();
+                    let total_content_rows = screen.get_total_content_rows();
                     let scrollable_rows =
                         total_content_rows.saturating_sub(viewport_height as usize);
                     let needs_scrollbar = scrollable_rows > 0;

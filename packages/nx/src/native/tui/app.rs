@@ -7,15 +7,27 @@ use super::{
 use crate::native::tui::tui::Tui;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
+use hashbrown::HashMap;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Modifier;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use std::default::Default;
+use std::io::Write;
+use std::sync::{Arc, Mutex, RwLock};
+use napi::bindgen_prelude::External;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
+use vt100_ctt::{Parser, Screen};
+use crate::native::pseudo_terminal::pseudo_terminal::{ParserArc, WriterArc};
+
+#[derive(Default)]
+pub struct AppState {
+    pub pseudo_terminals: HashMap<String, (External<(ParserArc, WriterArc)>)>,
+}
 
 pub struct App {
     pub tick_rate: f64,
@@ -23,6 +35,7 @@ pub struct App {
     pub components: Vec<Box<dyn Component>>,
     pub should_quit: bool,
     pub last_tick_key_events: Vec<KeyEvent>,
+    state: AppState,
     focus: Focus,
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
@@ -51,12 +64,24 @@ impl App {
             tick_rate,
             frame_rate,
             components,
+            state: Default::default(),
             should_quit: false,
             last_tick_key_events: Vec::new(),
             focus: Focus::TaskList,
             previous_focus: Focus::TaskList,
             done_callback: None,
         })
+    }
+
+    pub fn register_running_task(
+        &mut self,
+        task_id: String,
+        parser_and_writer: External<(ParserArc, WriterArc)>,
+    ) {
+        debug!("Registering running task: {}", task_id);
+        self.state
+            .pseudo_terminals
+            .insert(task_id, parser_and_writer);
     }
 
     pub fn handle_event(
@@ -87,6 +112,8 @@ impl App {
                 {
                     // Only handle '?' key if we're not in interactive mode
                     if matches!(key.code, KeyCode::Char('?')) && !tasks_list.is_interactive_mode() {
+                        debug!("{:?}", self.state.pseudo_terminals.keys().count());
+
                         let show_help_popup = !matches!(self.focus, Focus::HelpPopup);
                         if let Some(help_popup) = self
                             .components
@@ -456,11 +483,11 @@ impl App {
                     .iter_mut()
                     .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
                 {
-                    tasks_list.handle_resize(w, h).ok();
+                    tasks_list.handle_resize(w, h, &mut self.state).ok();
                 }
                 tui.draw(|f| {
                     for component in self.components.iter_mut() {
-                        let r = component.draw(f, f.area());
+                        let r = component.draw(f, f.area(), &mut self.state);
                         if let Err(e) = r {
                             action_tx
                                 .send(Action::Error(format!("Failed to draw: {:?}", e)))
@@ -518,7 +545,7 @@ impl App {
                             tasks_list.set_dimmed(matches!(current_focus, Focus::HelpPopup));
                             tasks_list.set_focus(current_focus);
                         }
-                        let r = component.draw(f, f.area());
+                        let r = component.draw(f, f.area(), &mut self.state);
                         if let Err(e) = r {
                             action_tx
                                 .send(Action::Error(format!("Failed to draw: {:?}", e)))
@@ -532,7 +559,7 @@ impl App {
 
         // Update components
         for component in self.components.iter_mut() {
-            if let Ok(Some(new_action)) = component.update(action.clone()) {
+            if let Ok(Some(new_action)) = component.update(action.clone(), &mut self.state) {
                 action_tx.send(new_action).ok();
             }
         }

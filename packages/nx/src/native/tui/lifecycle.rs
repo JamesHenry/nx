@@ -6,14 +6,18 @@ use super::task::{
 use super::utils::initialize_panic_handler;
 use super::{app, pty, task, tui};
 use crate::native::logger::enable_logger;
+use crate::native::pseudo_terminal::pseudo_terminal::{ParserArc, WriterArc};
 use crate::native::tui::app::App;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi::JsObject;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::io::Write;
+use std::sync::{Arc, Mutex, RwLock};
 use tasks_list::TaskStatus;
+use tokio::io::AsyncWriteExt;
 use tracing::debug;
+use vt100_ctt::Parser;
 
 #[napi(object)]
 #[derive(Clone, serde::Serialize)]
@@ -298,6 +302,17 @@ impl AppLifeCycle {
         });
 
         Ok(())
+    }
+
+    #[napi]
+    pub fn register_running_task(
+        &mut self,
+        task_id: String,
+        parser_and_writer: External<(ParserArc, WriterArc)>,
+    ) {
+        let mut app = self.app.lock().unwrap();
+
+        app.register_running_task(task_id, parser_and_writer)
     }
 
     // Rust-only lifecycle method
