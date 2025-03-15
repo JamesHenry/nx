@@ -251,7 +251,8 @@ impl<'a> TerminalPane<'a> {
         let pty_width = area
             .width
             .saturating_sub(2) // borders
-            .saturating_sub(4); // padding (2 left + 2 right)
+            .saturating_sub(4) // padding (2 left + 2 right)
+            .saturating_sub(1); // 1 extra (based on empirical testing) to ensure characters are not cut off
 
         // Ensure minimum sizes
         let pty_height = pty_height.max(3);

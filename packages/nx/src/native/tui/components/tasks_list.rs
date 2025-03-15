@@ -1,7 +1,15 @@
-use super::pagination::Pagination;
-use super::task_selection_manager::TaskSelectionManager;
-use super::terminal_pane::{TerminalPane, TerminalPaneData};
-use super::{help_text::HelpText, terminal_pane::TerminalPaneState};
+use color_eyre::eyre::Result;
+use crossterm::event::KeyEvent;
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    Frame,
+};
+use std::any::Any;
+use std::io;
+
 use crate::native::tui::app::AppState;
 use crate::native::tui::utils::sort_task_items;
 use crate::native::tui::{
@@ -12,19 +20,11 @@ use crate::native::tui::{
     task::{Task, TaskResult},
     utils,
 };
-use color_eyre::eyre::Result;
-use crossterm::event::KeyEvent;
-use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, ScrollbarState, Table},
-    Frame,
-};
-use std::any::Any;
-use std::io;
-use std::sync::{Arc, Mutex};
-use tracing::debug;
+
+use super::pagination::Pagination;
+use super::task_selection_manager::TaskSelectionManager;
+use super::terminal_pane::{TerminalPane, TerminalPaneData};
+use super::{help_text::HelpText, terminal_pane::TerminalPaneState};
 
 const CACHE_STATUS_LOCAL_KEPT_EXISTING: &str = "Kept Existing";
 const CACHE_STATUS_LOCAL: &str = "Local";
@@ -43,10 +43,6 @@ pub struct TasksList {
     filter_text: String,
     filter_persisted: bool, // Whether the filter is in a persisted state
     focus: Focus,
-    last_box_area: Rect,
-    scroll_offset: usize,
-    scrollbar_state: ScrollbarState,
-    content_height: usize,
     pane_tasks: [Option<String>; 2], // Tasks assigned to panes 1 and 2 (0-indexed)
     focused_pane: Option<usize>,     // Currently focused pane (if any)
     is_dimmed: bool,
@@ -191,10 +187,6 @@ impl TasksList {
             filter_text: String::new(),
             filter_persisted: false,
             focus: Focus::TaskList,
-            last_box_area: Rect::default(),
-            scroll_offset: 0,
-            scrollbar_state: ScrollbarState::default(),
-            content_height: 0,
             pane_tasks: [None, None],
             focused_pane: None,
             is_dimmed: false,
@@ -217,7 +209,6 @@ impl TasksList {
                 self.pane_tasks[0] = Some(task_name.clone());
             }
         }
-        self.reset_scroll();
     }
 
     /// Moves the selection to the previous task in the list.
@@ -231,7 +222,6 @@ impl TasksList {
                 self.pane_tasks[0] = Some(task_name.clone());
             }
         }
-        self.reset_scroll();
     }
 
     /// Updates the output pane visibility after a page change.
@@ -253,7 +243,6 @@ impl TasksList {
         }
         self.selection_manager.next_page();
         self.update_pane_visibility_after_page_change();
-        self.reset_scroll();
     }
 
     /// Moves to the previous page of tasks.
@@ -264,7 +253,6 @@ impl TasksList {
         }
         self.selection_manager.previous_page();
         self.update_pane_visibility_after_page_change();
-        self.reset_scroll();
     }
 
     /// Creates a list of task entries with separators between different status groups.
@@ -418,38 +406,6 @@ impl TasksList {
         }
     }
 
-    /// Scrolls the content up by one line if possible.
-    pub fn scroll_up(&mut self) {
-        if self.is_scrollable() && self.scroll_offset > 0 {
-            self.scroll_offset -= 1;
-            self.scrollbar_state = self.scrollbar_state.position(self.scroll_offset);
-        }
-    }
-
-    /// Scrolls the content down by one line if possible.
-    pub fn scroll_down(&mut self) {
-        if self.is_scrollable() {
-            let max_scroll = self
-                .content_height
-                .saturating_sub(self.last_box_area.height as usize);
-            if self.scroll_offset < max_scroll {
-                self.scroll_offset += 1;
-                self.scrollbar_state = self.scrollbar_state.position(self.scroll_offset);
-            }
-        }
-    }
-
-    /// Checks if the content is scrollable based on content height and viewport area.
-    fn is_scrollable(&self) -> bool {
-        self.content_height > self.last_box_area.height as usize
-    }
-
-    /// Resets the scroll position to the top and updates the scrollbar state.
-    pub fn reset_scroll(&mut self) {
-        self.scroll_offset = 0;
-        self.scrollbar_state = self.scrollbar_state.position(0);
-    }
-
     /// Toggles the visibility of the output pane for the currently selected task.
     /// In spacebar mode, the output follows the task selection.
     pub fn toggle_output_visibility(&mut self) {
@@ -466,6 +422,9 @@ impl TasksList {
                 self.pane_tasks = [Some(task_name.clone()), None];
                 self.focused_pane = None;
                 self.spacebar_mode = true; // Enter spacebar mode
+
+                // Re-evaluate the optimal size of the terminal pane and pty
+                let _ = self.handle_resize(None);
             }
         }
     }
@@ -489,28 +448,29 @@ impl TasksList {
             if self.spacebar_mode && pane_idx == 0 {
                 self.spacebar_mode = false;
                 self.focused_pane = Some(0);
-                return;
-            }
+            } else {
+                // Check if the task is already pinned to the pane
+                if self.pane_tasks[pane_idx].as_deref() == Some(task_name.as_str()) {
+                    // Unpin the task if it's already pinned
+                    self.pane_tasks[pane_idx] = None;
 
-            // Check if the task is already pinned to the pane
-            if self.pane_tasks[pane_idx].as_deref() == Some(task_name.as_str()) {
-                // Unpin the task if it's already pinned
-                self.pane_tasks[pane_idx] = None;
-
-                // Adjust focused pane if necessary
-                if !self.has_visible_panes() {
-                    self.focused_pane = None;
+                    // Adjust focused pane if necessary
+                    if !self.has_visible_panes() {
+                        self.focused_pane = None;
+                        self.focus = Focus::TaskList;
+                        self.spacebar_mode = false;
+                    }
+                } else {
+                    // Pin the task to the specified pane
+                    self.pane_tasks[pane_idx] = Some(task_name.clone());
+                    self.focused_pane = Some(pane_idx);
                     self.focus = Focus::TaskList;
-                    self.spacebar_mode = false;
+                    self.spacebar_mode = false; // Exit spacebar mode when pinning
                 }
-                return;
             }
 
-            // Pin the task to the specified pane
-            self.pane_tasks[pane_idx] = Some(task_name.clone());
-            self.focused_pane = Some(pane_idx);
-            self.focus = Focus::TaskList;
-            self.spacebar_mode = false; // Exit spacebar mode when pinning
+            // Always re-evaluate the optimal size of the terminal pane(s) and pty(s)
+            let _ = self.handle_resize(None);
         }
     }
 
@@ -609,15 +569,21 @@ impl TasksList {
     }
 
     /// Handles window resize events by updating PTY dimensions.
-    pub fn handle_resize(
-        &mut self,
-        width: u16,
-        height: u16,
-        app_state: &mut AppState,
-    ) -> io::Result<()> {
-        let output_area = if self.has_visible_panes() {
-            let width = (width / 3) * 2; // Two-thirds of width for PTY panes
-            Rect::new(0, 0, width, height)
+    pub fn handle_resize(&mut self, area_size: Option<(u16, u16)>) -> io::Result<()> {
+        let (width, height) = area_size.unwrap_or(
+            // Fallback to detecting the overall terminal size
+            crossterm::terminal::size()
+                // And ultimately fallback so a sane default
+                .unwrap_or((80, 24)),
+        );
+
+        // The pane_area will be 2/3s of the total width if one pane is visible/pinned, or 1/3 if two are visible/only the 2nd is pinned
+        let total_panes = self.pane_tasks.iter().filter(|t| t.is_some()).count();
+        // If the 2nd pane is pinned, regardless of if the 1st is visible or not, the terminal pane area need to be 1/2
+        let terminal_pane_area = if self.pane_tasks[1].is_some() || total_panes == 2 {
+            Rect::new(0, 0, width / 3, height) // One-third of width for two terminal panes
+        } else if total_panes == 1 {
+            Rect::new(0, 0, (width / 3) * 2, height) // Two-thirds of width for one terminal pane
         } else {
             Rect::new(0, 0, width, height)
         };
@@ -633,7 +599,7 @@ impl TasksList {
                         .pty_data(&mut self.terminal_pane_data[pane_idx]);
 
                     // Update PTY data and handle resize
-                    if terminal_pane.handle_resize(output_area)? {
+                    if terminal_pane.handle_resize(terminal_pane_area)? {
                         needs_sort = true;
                     }
 
@@ -870,13 +836,6 @@ impl TasksList {
         }
     }
 
-    pub fn get_active_pty_for_task(&self, task_id: &str) -> Option<&PtyInstance> {
-        self.tasks
-            .iter()
-            .find(|t| t.name == task_id)
-            .and_then(|t| t.pty.as_ref())
-    }
-
     /// Toggles the visibility of the task list panel
     pub fn toggle_task_list(&mut self) {
         // Only allow hiding if at least one pane is visible
@@ -891,7 +850,7 @@ impl TasksList {
 }
 
 impl Component for TasksList {
-    fn draw(&mut self, f: &mut Frame<'_>, area: Rect, app_state: &mut AppState) -> Result<()> {
+    fn draw(&mut self, f: &mut Frame<'_>, area: Rect, _app_state: &mut AppState) -> Result<()> {
         // Determine if we should use collapsed mode based on viewport width
         let collapsed_mode = self.has_visible_panes() || area.width < 100;
 
@@ -979,7 +938,7 @@ impl Component for TasksList {
                 Span::raw(" "),
                 Span::styled(" NX ", title_style.bold().bg(Color::Cyan).fg(Color::Black)),
                 Span::raw("   "),
-                Span::styled(" run-many16 ", title_style.fg(Color::Cyan).bold()),
+                Span::styled(" run-many ", title_style.fg(Color::Cyan).bold()),
             ];
 
             let task_names = self.target_names.clone();
@@ -1598,13 +1557,13 @@ impl Component for TasksList {
 
     /// Updates the component state in response to an action.
     /// Returns an optional follow-up action.
-    fn update(&mut self, action: Action, app_state: &mut AppState) -> Result<Option<Action>> {
+    fn update(&mut self, action: Action, _app_state: &mut AppState) -> Result<Option<Action>> {
         match action {
             Action::Tick => {
                 self.throbber_counter = self.throbber_counter.wrapping_add(1);
             }
             Action::Resize(w, h) => {
-                self.handle_resize(w, h, app_state)?;
+                self.handle_resize(Some((w, h)))?;
             }
             Action::EnterFilterMode => {
                 if self.filter_mode {
@@ -1624,16 +1583,6 @@ impl Component for TasksList {
             Action::RemoveFilterChar => {
                 if self.filter_mode {
                     self.remove_filter_char();
-                }
-            }
-            Action::ScrollUp => {
-                if self.is_scrollable() {
-                    self.scroll_up();
-                }
-            }
-            Action::ScrollDown => {
-                if self.is_scrollable() {
-                    self.scroll_down();
                 }
             }
             _ => {}
@@ -1661,10 +1610,6 @@ impl Default for TasksList {
             filter_text: String::new(),
             filter_persisted: false,
             focus: Focus::TaskList,
-            last_box_area: Rect::default(),
-            scroll_offset: 0,
-            scrollbar_state: ScrollbarState::default(),
-            content_height: 0,
             pane_tasks: [None, None],
             focused_pane: None,
             is_dimmed: false,

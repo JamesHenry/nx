@@ -628,7 +628,7 @@ impl App {
                     .iter_mut()
                     .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
                 {
-                    tasks_list.handle_resize(w, h, &mut self.state).ok();
+                    tasks_list.handle_resize(Some((w, h))).ok();
                 }
                 tui.draw(|f| {
                     for component in self.components.iter_mut() {
