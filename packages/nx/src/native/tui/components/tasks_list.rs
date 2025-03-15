@@ -1,3 +1,9 @@
+use super::pagination::Pagination;
+use super::task_selection_manager::TaskSelectionManager;
+use super::terminal_pane::{TerminalPane, TerminalPaneData};
+use super::{help_text::HelpText, terminal_pane::TerminalPaneState};
+use crate::native::tui::app::AppState;
+use crate::native::tui::utils::sort_task_items;
 use crate::native::tui::{
     action::Action,
     app::Focus,
@@ -17,12 +23,8 @@ use ratatui::{
 };
 use std::any::Any;
 use std::io;
-
-use super::pagination::Pagination;
-use super::task_selection_manager::TaskSelectionManager;
-use super::terminal_pane::{TerminalPane, TerminalPaneData};
-use super::{help_text::HelpText, terminal_pane::TerminalPaneState};
-use crate::native::tui::utils::sort_task_items;
+use std::sync::{Arc, Mutex};
+use tracing::debug;
 
 const CACHE_STATUS_LOCAL_KEPT_EXISTING: &str = "Kept Existing";
 const CACHE_STATUS_LOCAL: &str = "Local";
@@ -91,7 +93,11 @@ impl TaskItem {
     pub fn new(name: String, continuous: bool) -> Self {
         Self {
             name,
-            duration: "".to_string(),
+            duration: if continuous {
+                "Continuous".to_string()
+            } else {
+                "".to_string()
+            },
             cache_status: if continuous {
                 // We know upfront that the cache status will not be applicable
                 CACHE_STATUS_NOT_APPLICABLE.to_string()
@@ -120,38 +126,6 @@ impl TaskItem {
                 TaskStatus::RemoteCache => CACHE_STATUS_REMOTE.to_string(),
                 _ => CACHE_STATUS_NOT_APPLICABLE.to_string(),
             }
-        }
-    }
-
-    pub fn update_output_and_status(&mut self, output: &str, status: TaskStatus) {
-        self.terminal_output = output.to_string();
-        self.update_status(status);
-
-        // Get terminal size
-        let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
-        let (width, height) = terminal_size;
-
-        // Calculate dimensions using the same logic as handle_resize
-        let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
-        let area = Rect::new(0, 0, output_width, height);
-
-        // Use TerminalPane to calculate dimensions
-        let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
-
-        // Create a new PTY with the output
-        if let Ok(mut pty) = PtyInstance::new_with_output(pty_height, pty_width, output.as_bytes())
-        {
-            // Mark the PTY as completed with the appropriate exit code
-            let exit_code = match status {
-                TaskStatus::Success
-                | TaskStatus::LocalCacheKeptExisting
-                | TaskStatus::LocalCache
-                | TaskStatus::RemoteCache => 0,
-                TaskStatus::Failure => 1,
-                _ => 0, // Default to 0 for other statuses
-            };
-            pty.mark_as_completed(exit_code).ok();
-            self.pty = Some(pty);
         }
     }
 }
@@ -635,7 +609,12 @@ impl TasksList {
     }
 
     /// Handles window resize events by updating PTY dimensions.
-    pub fn handle_resize(&mut self, width: u16, height: u16) -> io::Result<()> {
+    pub fn handle_resize(
+        &mut self,
+        width: u16,
+        height: u16,
+        app_state: &mut AppState,
+    ) -> io::Result<()> {
         let output_area = if self.has_visible_panes() {
             let width = (width / 3) * 2; // Two-thirds of width for PTY panes
             Rect::new(0, 0, width, height)
@@ -812,43 +791,48 @@ impl TasksList {
         self.is_dimmed = is_dimmed;
     }
 
-    // In the TS driven case, we need to load tasks in given to us by the TS and render them as pending tasks
-    pub fn load_tasks(&mut self, tasks: Vec<Task>) {
-        let mut task_items = Vec::new();
-        for task in tasks {
-            task_items.push(TaskItem::new(task.id, task.continuous.unwrap_or(false)));
-        }
-        self.tasks = task_items;
-        self.sort_tasks();
-    }
-
     /// Updates their status to InProgress and triggers a sort.
-    pub fn start_tasks(&mut self, tasks: Vec<Task>) {
-        for task in tasks {
-            if let Some(task_item) = self.tasks.iter_mut().find(|t| t.name == task.id) {
-                task_item.update_status(TaskStatus::InProgress);
+    pub fn start_tasks(&mut self, tasks: Vec<Task>, app_state: &mut AppState) {
+        // for task in tasks {
+        //     if let Some(task_item) = self.tasks.iter_mut().find(|t| t.name == task.id) {
+        //         task_item.update_status(TaskStatus::InProgress);
 
-                // Get terminal size
-                let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
-                let (width, height) = terminal_size;
+        //         // TODO: replace resizing logic (but note the previous hardcoded output width that probably explained why the contents didn't wrap correctly with two panes showing)
+        //         // Get terminal size
+        //         // let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
+        //         // let (width, height) = terminal_size;
 
-                // Calculate dimensions using the same logic as handle_resize
-                let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
-                let area = Rect::new(0, 0, output_width, height);
+        //         // // Calculate dimensions using the same logic as handle_resize
+        //         // let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
+        //         // let area = Rect::new(0, 0, output_width, height);
 
-                // Use TerminalPane to calculate dimensions
-                let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
+        //         // // Use TerminalPane to calculate dimensions
+        //         // let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
 
-                // Create PTY with empty output, the command and args will be executed by the lifecycle method
-                if let Ok(pty) = PtyInstance::new_with_output(pty_height, pty_width, b"") {
-                    task_item.pty = Some(pty);
-                }
-            }
-        }
+        //         // Look up the parser and writer for the task and create a PtyInstance with them
+        //         let parser_and_writer = app_state.pseudo_terminals.get(&task.id).unwrap();
+        //         // Dereference External to access its contents
+        //         let (parser, writer) = &**parser_and_writer;
+        //         let parser_clone = parser.clone();
+        //         let writer_clone = writer.clone();
+        //         let exit_status = Arc::new(Mutex::new(None));
+
+        //         if let Ok(pty) = PtyInstance::new(
+        //             task_item.name.clone(),
+        //             parser_clone,
+        //             writer_clone,
+        //             exit_status,
+        //         ) {
+        //             // Process any initial output if needed
+        //             PtyInstance::process_output(&pty.parser, b"").ok();
+        //             task_item.pty = Some(pty);
+        //         }
+        //     }
+        // }
         self.sort_tasks();
     }
 
-    pub fn end_tasks(&mut self, task_results: Vec<TaskResult>) {
+    pub fn end_tasks(&mut self, task_results: Vec<TaskResult>, _app_state: &mut AppState) {
         for task_result in task_results {
             if let Some(task) = self
                 .tasks
@@ -856,18 +840,7 @@ impl TasksList {
                 .find(|t| t.name == task_result.task.id)
             {
                 let parsed_status = task_result.status.parse().unwrap();
-
-                // In the case of tasks that actually ran (i.e. not cache hits), there will be a final terminal output
-                // copy on the task result. We need to update the task's terminal output and create a new PTY in this case.
-                if task_result.terminal_output.is_some() {
-                    task.update_output_and_status(
-                        task_result.terminal_output.unwrap_or_default().as_str(),
-                        parsed_status,
-                    );
-                } else {
-                    // We always need to make sure the status is updated, even if there is no terminal output
-                    task.update_status(parsed_status);
-                }
+                task.update_status(parsed_status);
 
                 if task_result.task.start_time.is_some() && task_result.task.end_time.is_some() {
                     task.start_time = Some(task_result.task.start_time.unwrap() as u128);
@@ -890,14 +863,10 @@ impl TasksList {
         }
     }
 
-    pub fn update_task_output_and_status(
-        &mut self,
-        task_id: &str,
-        status: TaskStatus,
-        output: Option<&str>,
-    ) {
+    pub fn update_task_status(&mut self, task_id: String, status: TaskStatus) {
         if let Some(task) = self.tasks.iter_mut().find(|t| t.name == task_id) {
-            task.update_output_and_status(output.unwrap_or_default(), status);
+            task.update_status(status);
+            self.sort_tasks();
         }
     }
 
@@ -922,7 +891,7 @@ impl TasksList {
 }
 
 impl Component for TasksList {
-    fn draw(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+    fn draw(&mut self, f: &mut Frame<'_>, area: Rect, app_state: &mut AppState) -> Result<()> {
         // Determine if we should use collapsed mode based on viewport width
         let collapsed_mode = self.has_visible_panes() || area.width < 100;
 
@@ -1010,7 +979,7 @@ impl Component for TasksList {
                 Span::raw(" "),
                 Span::styled(" NX ", title_style.bold().bg(Color::Cyan).fg(Color::Black)),
                 Span::raw("   "),
-                Span::styled(" run-many ", title_style.fg(Color::Cyan).bold()),
+                Span::styled(" run-many16 ", title_style.fg(Color::Cyan).bold()),
             ];
 
             let task_names = self.target_names.clone();
@@ -1629,13 +1598,13 @@ impl Component for TasksList {
 
     /// Updates the component state in response to an action.
     /// Returns an optional follow-up action.
-    fn update(&mut self, action: Action) -> Result<Option<Action>> {
+    fn update(&mut self, action: Action, app_state: &mut AppState) -> Result<Option<Action>> {
         match action {
             Action::Tick => {
                 self.throbber_counter = self.throbber_counter.wrapping_add(1);
             }
             Action::Resize(w, h) => {
-                self.handle_resize(w, h)?;
+                self.handle_resize(w, h, app_state)?;
             }
             Action::EnterFilterMode => {
                 if self.filter_mode {

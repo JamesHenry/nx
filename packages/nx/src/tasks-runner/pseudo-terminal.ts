@@ -14,9 +14,11 @@ export function getPseudoTerminal(skipSupportCheck: boolean = false) {
 
   return pseudoTerminal;
 }
-
+let id = 0;
 export class PseudoTerminal {
-  private pseudoIPCPath = getForkedProcessOsSocketPath(process.pid.toString());
+  private pseudoIPCPath = getForkedProcessOsSocketPath(
+    process.pid.toString() + '-' + id++
+  );
   private pseudoIPC = new PseudoIPCServer(this.pseudoIPCPath);
 
   private initialized: boolean = false;
@@ -45,22 +47,26 @@ export class PseudoTerminal {
       jsEnv,
       quiet,
       tty,
+      prependCommandToOutput,
     }: {
       cwd?: string;
       execArgv?: string[];
       jsEnv?: Record<string, string>;
       quiet?: boolean;
       tty?: boolean;
+      prependCommandToOutput?: boolean;
     } = {}
   ) {
     return new PseudoTtyProcess(
+      this.rustPseudoTerminal,
       this.rustPseudoTerminal.runCommand(
         command,
         cwd,
         jsEnv,
         execArgv,
         quiet,
-        tty
+        tty,
+        prependCommandToOutput
       )
     );
   }
@@ -84,6 +90,7 @@ export class PseudoTerminal {
       throw new Error('Call init() before forking processes');
     }
     const cp = new PseudoTtyProcessWithSend(
+      this.rustPseudoTerminal,
       this.rustPseudoTerminal.fork(
         id,
         script,
@@ -143,7 +150,10 @@ export class PseudoTtyProcess {
 
   private terminalOutput = '';
 
-  constructor(private childProcess: ChildProcess) {
+  constructor(
+    public rustPseudoTerminal: RustPseudoTerminal,
+    private childProcess: ChildProcess
+  ) {
     childProcess.onOutput((output) => {
       this.terminalOutput += output;
       this.outputCallbacks.forEach((cb) => cb(output));
@@ -187,15 +197,20 @@ export class PseudoTtyProcess {
       }
     }
   }
+
+  getParserAndWriter() {
+    return this.childProcess.getParserAndWriter();
+  }
 }
 
 export class PseudoTtyProcessWithSend extends PseudoTtyProcess {
   constructor(
+    public rustPseudoTerminal: RustPseudoTerminal,
     _childProcess: ChildProcess,
     private id: string,
     private pseudoIpc: PseudoIPCServer
   ) {
-    super(_childProcess);
+    super(rustPseudoTerminal, _childProcess);
   }
 
   send(message: Serializable) {

@@ -13,8 +13,9 @@ use ratatui::{
 use std::io;
 use tui_term::widget::PseudoTerminal;
 
-use super::tasks_list::TaskStatus;
 use crate::native::tui::pty::PtyInstance;
+
+use super::tasks_list::TaskStatus;
 
 pub struct TerminalPaneData {
     pub pty: Option<PtyInstance>,
