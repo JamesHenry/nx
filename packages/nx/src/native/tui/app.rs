@@ -1,6 +1,5 @@
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
-use hashbrown::HashMap;
 use napi::bindgen_prelude::External;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use ratatui::layout::{Alignment, Rect};
@@ -18,12 +17,10 @@ use vt100_ctt::Parser;
 
 use crate::native::pseudo_terminal::pseudo_terminal::{ParserArc, WriterArc};
 use crate::native::tui::components::tasks_list::TaskStatus;
-use crate::native::tui::pty::PtyInstance;
 use crate::native::tui::tui::Tui;
 
-use super::components::terminal_pane::TerminalPane;
 use super::task::{Task, TaskResult};
-use super::utils::normalize_newlines;
+use super::utils::{is_cache_hit, normalize_newlines};
 use super::{
     action::Action,
     components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
@@ -31,9 +28,7 @@ use super::{
 };
 
 #[derive(Default)]
-pub struct AppState {
-    pub pseudo_terminals: HashMap<String, External<(ParserArc, WriterArc)>>,
-}
+pub struct AppState {}
 
 pub struct App {
     pub components: Vec<Box<dyn Component>>,
@@ -112,51 +107,31 @@ impl App {
         output: String,
     ) {
         // If the status is a cache hit, we need to create a new parser and writer for the task in order to print the output
-        if matches!(
-            status,
-            TaskStatus::LocalCache | TaskStatus::LocalCacheKeptExisting | TaskStatus::RemoteCache
-        ) {
-            // Get terminal size
-            let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
-            let (width, height) = terminal_size;
-
-            // TODO: this is hardcoded to 2/3 but that is not appropriate for multiple panes being shown
-            // Calculate dimensions using the same logic as handle_resize
-            let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
-            let area = Rect::new(0, 0, output_width, height);
-
-            // Use TerminalPane to calculate dimensions
-            let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
-
-            // Create a new parser
-            let parser = Arc::new(RwLock::new(Parser::new(pty_height, pty_width, 10000)));
+        if is_cache_hit(status) {
+            let parser = Arc::new(RwLock::new(Parser::new(24, 80, 10000)));
             // Create a no-op writer, it is not relevant for the cached output case
             let writer: Arc<Mutex<Box<dyn Write + Send>>> =
                 Arc::new(Mutex::new(Box::new(std::io::sink())));
 
-            // Write the output directly to the parser
+            // For cache hits with pre-existing output, we need to write the output to the parser
             parser
                 .write()
                 .unwrap()
                 .write_all(&normalize_newlines(output.as_bytes()))
                 .unwrap();
+            parser.write().unwrap().flush().unwrap();
 
             let parser_and_writer = External::new((parser.clone(), writer.clone()));
-            self.register_running_task(task_id.clone(), parser_and_writer, status);
 
-            // Create a PtyInstance with the cloned parser and writer
-            let pty = PtyInstance::new(task_id.clone(), parser, writer)
-                .map_err(|e| napi::Error::from_reason(format!("Failed to create PTY: {}", e)))
-                .unwrap();
-
-            // Update the task in tasks list with the pty instance and status
+            // Update the task in tasks list and create and register the pty instance for this task
             if let Some(tasks_list) = self
                 .components
                 .iter_mut()
                 .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
             {
-                tasks_list.update_task_pty(task_id.clone(), pty);
+                tasks_list.create_and_register_pty_instance(&task_id, parser_and_writer);
                 tasks_list.update_task_status(task_id.clone(), status);
+                let _ = tasks_list.handle_resize(None);
             }
         }
     }
@@ -177,55 +152,13 @@ impl App {
         parser_and_writer: External<(ParserArc, WriterArc)>,
         task_status: TaskStatus,
     ) {
-        debug!("Registering running task: {}", task_id);
-
-        let parser_and_writer_clone = parser_and_writer.clone();
-        let task_id_clone = task_id.clone();
-        self.state
-            .pseudo_terminals
-            .insert(task_id, parser_and_writer);
-
-        // If the task is actually being run, we need to create a PtyInstance for the task
-        if matches!(task_status, TaskStatus::InProgress) {
-            if let Some(tasks_list) = self
-                .components
-                .iter_mut()
-                .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-            {
-                // Access the contents of the External
-                let (parser, writer) = &parser_and_writer_clone;
-                let writer_clone = writer.clone();
-
-                let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
-                let (width, height) = terminal_size;
-
-                // TODO: replace resizing logic (but note the previous hardcoded output width that probably explained why the contents didn't wrap correctly with two panes showing)
-                // Calculate dimensions using the same logic as handle_resize
-                let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
-                let area = Rect::new(0, 0, output_width, height);
-
-                // Use TerminalPane to calculate dimensions
-                let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
-
-                // Get a reference to the parser before cloning it
-                let parser_clone = parser.clone();
-
-                // Size the parser screen appropriately - get a write lock first
-                if let Ok(mut parser_guard) = parser_clone.write() {
-                    parser_guard.screen_mut().set_size(pty_height, pty_width);
-                }
-
-                // Create a PtyInstance with the cloned parser and writer
-                let pty = PtyInstance::new(task_id_clone.clone(), parser_clone, writer_clone)
-                    .map_err(|e| napi::Error::from_reason(format!("Failed to create PTY: {}", e)))
-                    .unwrap();
-
-                // Update the task in tasks list with the pty instance
-                tasks_list.update_task_pty(task_id_clone.clone(), pty);
-
-                // Update the status
-                tasks_list.update_task_status(task_id_clone.clone(), TaskStatus::InProgress);
-            }
+        if let Some(tasks_list) = self
+            .components
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
+        {
+            tasks_list.create_and_register_pty_instance(&task_id, parser_and_writer);
+            tasks_list.update_task_status(task_id.clone(), task_status);
         }
     }
 
@@ -257,8 +190,6 @@ impl App {
                 {
                     // Only handle '?' key if we're not in interactive mode
                     if matches!(key.code, KeyCode::Char('?')) && !tasks_list.is_interactive_mode() {
-                        debug!("{:?}", self.state.pseudo_terminals.keys().count());
-
                         let show_help_popup = !matches!(self.focus, Focus::HelpPopup);
                         if let Some(help_popup) = self
                             .components

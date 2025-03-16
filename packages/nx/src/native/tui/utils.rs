@@ -87,6 +87,13 @@ pub fn normalize_newlines(input: &[u8]) -> Vec<u8> {
     output
 }
 
+pub fn is_cache_hit(status: TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::LocalCacheKeptExisting | TaskStatus::LocalCache | TaskStatus::RemoteCache
+    )
+}
+
 /// Sorts a list of TaskItems with a stable, total ordering.
 ///
 /// The sort order is:

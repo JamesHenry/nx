@@ -10,7 +10,7 @@ use ratatui::{
         ScrollbarState, StatefulWidget, Widget,
     },
 };
-use std::io;
+use std::{io, sync::Arc};
 use tui_term::widget::PseudoTerminal;
 
 use crate::native::tui::pty::PtyInstance;
@@ -18,7 +18,7 @@ use crate::native::tui::pty::PtyInstance;
 use super::tasks_list::TaskStatus;
 
 pub struct TerminalPaneData {
-    pub pty: Option<PtyInstance>,
+    pub pty: Option<Arc<PtyInstance>>,
     pub status: TaskStatus,
     pub is_interactive: bool,
     pub is_continuous: bool,
@@ -48,21 +48,22 @@ impl TerminalPaneData {
 
     pub fn handle_key_event(&mut self, key: KeyEvent) -> io::Result<()> {
         if let Some(pty) = &mut self.pty {
+            let mut pty_mut = pty.as_ref().clone();
             match key.code {
                 // Handle arrow key based scrolling regardless of interactive mode
                 KeyCode::Up => {
-                    pty.scroll_up();
+                    pty_mut.scroll_up();
                     return Ok(());
                 }
                 KeyCode::Down => {
-                    pty.scroll_down();
+                    pty_mut.scroll_down();
                     return Ok(());
                 }
                 // Handle j/k for scrolling when not in interactive mode
                 KeyCode::Char('k') | KeyCode::Char('j') if !self.is_interactive => {
                     match key.code {
-                        KeyCode::Char('k') => pty.scroll_up(),
-                        KeyCode::Char('j') => pty.scroll_down(),
+                        KeyCode::Char('k') => pty_mut.scroll_up(),
+                        KeyCode::Char('j') => pty_mut.scroll_down(),
                         _ => {}
                     }
                     return Ok(());
@@ -73,7 +74,7 @@ impl TerminalPaneData {
                 {
                     // Scroll up a somewhat arbitrary "chunk" (12 lines)
                     for _ in 0..12 {
-                        pty.scroll_up();
+                        pty_mut.scroll_up();
                     }
                     return Ok(());
                 }
@@ -82,7 +83,7 @@ impl TerminalPaneData {
                 {
                     // Scroll down a somewhat arbitrary "chunk" (12 lines)
                     for _ in 0..12 {
-                        pty.scroll_down();
+                        pty_mut.scroll_down();
                     }
                     return Ok(());
                 }
@@ -119,16 +120,16 @@ impl TerminalPaneData {
                 // Only send input to PTY if we're in interactive mode
                 _ if self.is_interactive => match key.code {
                     KeyCode::Char(c) => {
-                        pty.write_input(c.to_string().as_bytes())?;
+                        pty_mut.write_input(c.to_string().as_bytes())?;
                     }
                     KeyCode::Enter => {
-                        pty.write_input(b"\r")?;
+                        pty_mut.write_input(b"\r")?;
                     }
                     KeyCode::Esc => {
-                        pty.write_input(&[0x1b])?;
+                        pty_mut.write_input(&[0x1b])?;
                     }
                     KeyCode::Backspace => {
-                        pty.write_input(&[0x7f])?;
+                        pty_mut.write_input(&[0x7f])?;
                     }
                     _ => {}
                 },
@@ -241,7 +242,7 @@ impl<'a> TerminalPane<'a> {
         })
     }
 
-    /// Calculates the PTY dimensions taking into account borders and padding
+    /// Calculates appropriate pty dimensions by applying relevant borders and padding adjustments to the given area
     pub fn calculate_pty_dimensions(area: Rect) -> (u16, u16) {
         // Account for borders and padding correctly
         let pty_height = area
@@ -259,48 +260,6 @@ impl<'a> TerminalPane<'a> {
         let pty_width = pty_width.max(20);
 
         (pty_height, pty_width)
-    }
-
-    /// Handles resizing of the terminal pane and its PTY.
-    /// Returns true if the dimensions changed and a sort is needed.
-    pub fn handle_resize(&mut self, area: Rect) -> io::Result<bool> {
-        if let Some(pty_data) = &mut self.pty_data {
-            if let Some(pty) = &mut pty_data.pty {
-                // Get current dimensions before resize
-                let old_rows = if let Some(screen) = pty.get_screen() {
-                    let (rows, _) = screen.size();
-                    rows
-                } else {
-                    0
-                };
-
-                let (pty_height, pty_width) = Self::calculate_pty_dimensions(area);
-                pty.resize(pty_height, pty_width)?;
-
-                // Return true if dimensions changed
-                Ok(old_rows != pty_height)
-            } else {
-                Ok(false)
-            }
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Updates the PTY data from a task and returns a cloned PTY if one exists
-    pub fn update_pty_from_task(
-        &mut self,
-        task_pty: Option<PtyInstance>,
-        task_status: TaskStatus,
-    ) -> Option<PtyInstance> {
-        if let Some(pty_data) = &mut self.pty_data {
-            pty_data.pty = task_pty;
-            pty_data.status = task_status;
-            pty_data.is_continuous = self.is_continuous;
-            pty_data.pty.clone()
-        } else {
-            None
-        }
     }
 
     /// Returns whether currently in interactive mode.

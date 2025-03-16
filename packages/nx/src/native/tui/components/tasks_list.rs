@@ -1,5 +1,6 @@
 use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;
+use napi::bindgen_prelude::External;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -7,10 +8,9 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Frame,
 };
-use std::any::Any;
-use std::io;
+use std::{any::Any, sync::Arc};
+use std::{collections::HashMap, io};
 
-use crate::native::tui::app::AppState;
 use crate::native::tui::utils::sort_task_items;
 use crate::native::tui::{
     action::Action,
@@ -19,6 +19,10 @@ use crate::native::tui::{
     pty::PtyInstance,
     task::{Task, TaskResult},
     utils,
+};
+use crate::native::{
+    pseudo_terminal::pseudo_terminal::{ParserArc, WriterArc},
+    tui::app::AppState,
 };
 
 use super::pagination::Pagination;
@@ -32,27 +36,6 @@ const CACHE_STATUS_REMOTE: &str = "Remote";
 const CACHE_STATUS_NOT_YET_KNOWN: &str = "...";
 const CACHE_STATUS_NOT_APPLICABLE: &str = "-";
 
-/// A list component that displays and manages tasks in a terminal UI.
-/// Provides filtering, sorting, and output display capabilities.
-pub struct TasksList {
-    selection_manager: TaskSelectionManager,
-    tasks: Vec<TaskItem>,        // Source of truth - all tasks
-    filtered_names: Vec<String>, // Names of tasks that match the filter
-    throbber_counter: usize,
-    pub filter_mode: bool,
-    filter_text: String,
-    filter_persisted: bool, // Whether the filter is in a persisted state
-    focus: Focus,
-    pane_tasks: [Option<String>; 2], // Tasks assigned to panes 1 and 2 (0-indexed)
-    focused_pane: Option<usize>,     // Currently focused pane (if any)
-    is_dimmed: bool,
-    spacebar_mode: bool, // Whether we're in spacebar mode (output follows selection)
-    terminal_pane_data: [TerminalPaneData; 2],
-    target_names: Vec<String>,
-    task_list_hidden: bool, // New field to track if task list is hidden
-    cloud_message: Option<String>,
-}
-
 /// Represents an individual task with its current state and execution details.
 pub struct TaskItem {
     // Public to aid with sorting utility and testing
@@ -63,7 +46,6 @@ pub struct TaskItem {
     pub status: TaskStatus,
     terminal_output: String,
     continuous: bool,
-    pty: Option<PtyInstance>,
     start_time: Option<u128>,
     // Public to aid with sorting utility and testing
     pub end_time: Option<u128>,
@@ -78,7 +60,6 @@ impl Clone for TaskItem {
             status: self.status.clone(),
             continuous: self.continuous,
             terminal_output: self.terminal_output.clone(),
-            pty: None,
             start_time: self.start_time,
             end_time: self.end_time,
         }
@@ -103,7 +84,6 @@ impl TaskItem {
             status: TaskStatus::NotStarted,
             continuous,
             terminal_output: String::new(),
-            pty: None,
             start_time: None,
             end_time: None,
         }
@@ -165,6 +145,29 @@ impl std::str::FromStr for TaskStatus {
     }
 }
 
+/// A list component that displays and manages tasks in a terminal UI.
+/// Provides filtering, sorting, and output display capabilities.
+pub struct TasksList {
+    // task id -> pty instance
+    pub pty_instances: HashMap<String, Arc<PtyInstance>>,
+    selection_manager: TaskSelectionManager,
+    tasks: Vec<TaskItem>,        // Source of truth - all tasks
+    filtered_names: Vec<String>, // Names of tasks that match the filter
+    throbber_counter: usize,
+    pub filter_mode: bool,
+    filter_text: String,
+    filter_persisted: bool, // Whether the filter is in a persisted state
+    focus: Focus,
+    pane_tasks: [Option<String>; 2], // Tasks assigned to panes 1 and 2 (0-indexed)
+    focused_pane: Option<usize>,     // Currently focused pane (if any)
+    is_dimmed: bool,
+    spacebar_mode: bool, // Whether we're in spacebar mode (output follows selection)
+    terminal_pane_data: [TerminalPaneData; 2],
+    target_names: Vec<String>,
+    task_list_hidden: bool, // New field to track if task list is hidden
+    cloud_message: Option<String>,
+}
+
 impl TasksList {
     /// Creates a new TasksList with the given tasks.
     /// Converts the input tasks into TaskItems and initializes the UI state.
@@ -179,6 +182,7 @@ impl TasksList {
         let selection_manager = TaskSelectionManager::new(5); // Default 5 items per page
 
         Self {
+            pty_instances: HashMap::new(),
             selection_manager,
             filtered_names,
             tasks: task_items,
@@ -196,6 +200,24 @@ impl TasksList {
             task_list_hidden: false,
             cloud_message: None,
         }
+    }
+
+    // TODO: move to app level when the focus and terminal pane data are moved up
+    pub fn create_and_register_pty_instance(
+        &mut self,
+        task_id: &str,
+        parser_and_writer: External<(ParserArc, WriterArc)>,
+    ) {
+        // Access the contents of the External
+        let parser_and_writer_clone = parser_and_writer.clone();
+        let (parser, writer) = &parser_and_writer_clone;
+        let pty = Arc::new(
+            PtyInstance::new(task_id.to_string(), parser.clone(), writer.clone())
+                .map_err(|e| napi::Error::from_reason(format!("Failed to create PTY: {}", e)))
+                .unwrap(),
+        );
+
+        self.pty_instances.insert(task_id.to_string(), pty.clone());
     }
 
     /// Moves the selection to the next task in the list.
@@ -568,6 +590,7 @@ impl TasksList {
         }
     }
 
+    // TODO: Investigate forcing the cursor, and therefore scroll position, to be at the bottom of the pty when scrolling is required, right now it is relative to the top of the output
     /// Handles window resize events by updating PTY dimensions.
     pub fn handle_resize(&mut self, area_size: Option<(u16, u16)>) -> io::Result<()> {
         let (width, height) = area_size.unwrap_or(
@@ -590,24 +613,28 @@ impl TasksList {
 
         let mut needs_sort = false;
 
-        // Handle resize for each visible pane
-        for (pane_idx, task_name) in self.pane_tasks.iter().enumerate() {
+        // Handle resize for each visible pane's pty
+        for (_, task_name) in self.pane_tasks.iter().enumerate() {
             if let Some(task_name) = task_name {
                 if let Some(task) = self.tasks.iter_mut().find(|t| t.name == *task_name) {
-                    let mut terminal_pane = TerminalPane::new()
-                        .task_name(task.name.clone())
-                        .pty_data(&mut self.terminal_pane_data[pane_idx]);
+                    if let Some(pty) = self.pty_instances.get_mut(&task.name) {
+                        let (pty_height, pty_width) =
+                            TerminalPane::calculate_pty_dimensions(terminal_pane_area);
 
-                    // Update PTY data and handle resize
-                    if terminal_pane.handle_resize(terminal_pane_area)? {
-                        needs_sort = true;
-                    }
+                        // Get current dimensions before resize
+                        let old_rows = if let Some(screen) = pty.clone().get_screen() {
+                            let (rows, _) = screen.size();
+                            rows
+                        } else {
+                            0
+                        };
+                        let mut pty_clone = pty.as_ref().clone();
+                        pty_clone.resize(pty_height, pty_width)?;
 
-                    // Update task's PTY with any changes
-                    if let Some(updated_pty) =
-                        terminal_pane.update_pty_from_task(task.pty.clone(), task.status)
-                    {
-                        task.pty = Some(updated_pty);
+                        // If dimensions changed, mark for sort
+                        if old_rows != pty_height {
+                            needs_sort = true;
+                        }
                     }
                 }
             }
@@ -758,43 +785,43 @@ impl TasksList {
     }
 
     /// Updates their status to InProgress and triggers a sort.
-    pub fn start_tasks(&mut self, tasks: Vec<Task>, app_state: &mut AppState) {
-        // for task in tasks {
-        //     if let Some(task_item) = self.tasks.iter_mut().find(|t| t.name == task.id) {
-        //         task_item.update_status(TaskStatus::InProgress);
+    pub fn start_tasks(&mut self, tasks: Vec<Task>, _app_state: &mut AppState) {
+        for task in tasks {
+            if let Some(task_item) = self.tasks.iter_mut().find(|t| t.name == task.id) {
+                task_item.update_status(TaskStatus::InProgress);
 
-        //         // TODO: replace resizing logic (but note the previous hardcoded output width that probably explained why the contents didn't wrap correctly with two panes showing)
-        //         // Get terminal size
-        //         // let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
-        //         // let (width, height) = terminal_size;
+                //         // TODO: replace resizing logic (but note the previous hardcoded output width that probably explained why the contents didn't wrap correctly with two panes showing)
+                //         // Get terminal size
+                //         // let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
+                //         // let (width, height) = terminal_size;
 
-        //         // // Calculate dimensions using the same logic as handle_resize
-        //         // let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
-        //         // let area = Rect::new(0, 0, output_width, height);
+                //         // // Calculate dimensions using the same logic as handle_resize
+                //         // let output_width = (width / 3) * 2; // Two-thirds of width for PTY panes
+                //         // let area = Rect::new(0, 0, output_width, height);
 
-        //         // // Use TerminalPane to calculate dimensions
-        //         // let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
+                //         // // Use TerminalPane to calculate dimensions
+                //         // let (pty_height, pty_width) = TerminalPane::calculate_pty_dimensions(area);
 
-        //         // Look up the parser and writer for the task and create a PtyInstance with them
-        //         let parser_and_writer = app_state.pseudo_terminals.get(&task.id).unwrap();
-        //         // Dereference External to access its contents
-        //         let (parser, writer) = &**parser_and_writer;
-        //         let parser_clone = parser.clone();
-        //         let writer_clone = writer.clone();
-        //         let exit_status = Arc::new(Mutex::new(None));
+                //         // Look up the parser and writer for the task and create a PtyInstance with them
+                //         let parser_and_writer = app_state.pseudo_terminals.get(&task.id).unwrap();
+                //         // Dereference External to access its contents
+                //         let (parser, writer) = &**parser_and_writer;
+                //         let parser_clone = parser.clone();
+                //         let writer_clone = writer.clone();
+                //         let exit_status = Arc::new(Mutex::new(None));
 
-        //         if let Ok(pty) = PtyInstance::new(
-        //             task_item.name.clone(),
-        //             parser_clone,
-        //             writer_clone,
-        //             exit_status,
-        //         ) {
-        //             // Process any initial output if needed
-        //             PtyInstance::process_output(&pty.parser, b"").ok();
-        //             task_item.pty = Some(pty);
-        //         }
-        //     }
-        // }
+                //         if let Ok(pty) = PtyInstance::new(
+                //             task_item.name.clone(),
+                //             parser_clone,
+                //             writer_clone,
+                //             exit_status,
+                //         ) {
+                //             // Process any initial output if needed
+                //             PtyInstance::process_output(&pty.parser, b"").ok();
+                //             task_item.pty = Some(pty);
+                //         }
+            }
+        }
         self.sort_tasks();
     }
 
@@ -822,13 +849,6 @@ impl TasksList {
         self.sort_tasks();
     }
 
-    pub fn update_task_pty(&mut self, task_id: String, pty: PtyInstance) {
-        if let Some(task) = self.tasks.iter_mut().find(|t| t.name == task_id) {
-            task.pty = Some(pty);
-            self.sort_tasks();
-        }
-    }
-
     pub fn update_task_status(&mut self, task_id: String, status: TaskStatus) {
         if let Some(task) = self.tasks.iter_mut().find(|t| t.name == task_id) {
             task.update_status(status);
@@ -838,7 +858,7 @@ impl TasksList {
 
     /// Toggles the visibility of the task list panel
     pub fn toggle_task_list(&mut self) {
-        // Only allow hiding if at least one pane is visible
+        // Only allow hiding if at least one pane is visible, otherwise the screen will be blank
         if self.has_visible_panes() {
             self.task_list_hidden = !self.task_list_hidden;
         }
@@ -1442,7 +1462,7 @@ impl Component for TasksList {
                                 terminal_pane_data.status = task.status;
                                 terminal_pane_data.is_continuous = task.continuous;
 
-                                if let Some(pty) = &mut task.pty {
+                                if let Some(pty) = self.pty_instances.get(task_name) {
                                     terminal_pane_data.pty = Some(pty.clone());
                                 }
 
@@ -1478,7 +1498,7 @@ impl Component for TasksList {
                             terminal_pane_data.status = task.status;
                             terminal_pane_data.is_continuous = task.continuous;
 
-                            if let Some(pty) = &mut task.pty {
+                            if let Some(pty) = self.pty_instances.get(task_name) {
                                 terminal_pane_data.pty = Some(pty.clone());
                             }
 
@@ -1513,7 +1533,7 @@ impl Component for TasksList {
                                 terminal_pane_data.status = task.status;
                                 terminal_pane_data.is_continuous = task.continuous;
 
-                                if let Some(pty) = &mut task.pty {
+                                if let Some(pty) = self.pty_instances.get(task_name) {
                                     terminal_pane_data.pty = Some(pty.clone());
                                 }
 
@@ -1602,6 +1622,7 @@ impl Component for TasksList {
 impl Default for TasksList {
     fn default() -> Self {
         Self {
+            pty_instances: HashMap::new(),
             selection_manager: TaskSelectionManager::default(),
             tasks: Vec::new(),
             filtered_names: Vec::new(),
