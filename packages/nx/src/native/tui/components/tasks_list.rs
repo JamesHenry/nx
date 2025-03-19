@@ -167,7 +167,7 @@ pub struct TasksList {
     spacebar_mode: bool, // Whether we're in spacebar mode (output follows selection)
     terminal_pane_data: [TerminalPaneData; 2],
     target_names: Vec<String>,
-    task_list_hidden: bool, // New field to track if task list is hidden
+    task_list_hidden: bool,
     cloud_message: Option<String>,
 }
 
@@ -506,10 +506,22 @@ impl TasksList {
 
                 match next_pane {
                     Some(pane) => Focus::MultipleOutput(pane),
-                    None => Focus::TaskList,
+                    None => {
+                        // If the task list is hidden, try and go back to the previous pane if there is one, otherwise do nothing
+                        if self.task_list_hidden {
+                            if current_pane > 0 {
+                                Focus::MultipleOutput(current_pane - 1)
+                            } else {
+                                return;
+                            }
+                        } else {
+                            Focus::TaskList
+                        }
+                    }
                 }
             }
             Focus::HelpPopup => Focus::TaskList,
+            Focus::CountdownPopup => Focus::TaskList,
         };
     }
 
@@ -521,7 +533,7 @@ impl TasksList {
 
         self.focus = match self.focus {
             Focus::TaskList => {
-                // Move to last visible pane
+                // When on task list, go to the rightmost (highest index) pane
                 if let Some(last_pane) = (0..2).rev().find(|&idx| self.pane_tasks[idx].is_some()) {
                     Focus::MultipleOutput(last_pane)
                 } else {
@@ -529,21 +541,50 @@ impl TasksList {
                 }
             }
             Focus::MultipleOutput(current_pane) => {
-                // Find previous visible pane or go back to task list
                 if current_pane > 0 {
+                    // Try to go to previous pane
                     if let Some(prev_pane) = (0..current_pane)
                         .rev()
                         .find(|&idx| self.pane_tasks[idx].is_some())
                     {
                         Focus::MultipleOutput(prev_pane)
-                    } else {
+                    } else if !self.task_list_hidden {
+                        // Go to task list if it's visible
                         Focus::TaskList
+                    } else {
+                        // If task list is hidden, wrap around to rightmost pane
+                        if let Some(last_pane) =
+                            (0..2).rev().find(|&idx| self.pane_tasks[idx].is_some())
+                        {
+                            Focus::MultipleOutput(last_pane)
+                        } else {
+                            // Shouldn't happen (would mean no panes)
+                            return;
+                        }
                     }
                 } else {
-                    Focus::TaskList
+                    // We're at leftmost pane (index 0)
+                    if !self.task_list_hidden {
+                        // Go to task list if it's visible
+                        Focus::TaskList
+                    } else if num_panes > 1 {
+                        // If task list hidden and multiple panes, wrap to rightmost pane
+                        if let Some(last_pane) =
+                            (1..2).rev().find(|&idx| self.pane_tasks[idx].is_some())
+                        {
+                            Focus::MultipleOutput(last_pane)
+                        } else {
+                            // Stay on current pane if can't find another one
+                            Focus::MultipleOutput(current_pane)
+                        }
+                    } else {
+                        // Only one pane and task list hidden, nowhere to go
+                        Focus::MultipleOutput(current_pane)
+                    }
                 }
             }
             Focus::HelpPopup => Focus::TaskList,
+            Focus::CountdownPopup => Focus::TaskList,
         };
     }
 
@@ -551,7 +592,9 @@ impl TasksList {
     /// Returns a dimmed style when focus is not on the task list.
     fn get_table_style(&self) -> Style {
         match self.focus {
-            Focus::MultipleOutput(_) | Focus::HelpPopup => Style::default().dim(),
+            Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup => {
+                Style::default().dim()
+            }
             Focus::TaskList => Style::default(),
         }
     }
@@ -845,6 +888,10 @@ impl TasksList {
         // Only allow hiding if at least one pane is visible, otherwise the screen will be blank
         if self.has_visible_panes() {
             self.task_list_hidden = !self.task_list_hidden;
+            // Move focus to the next output pane
+            if matches!(self.focus, Focus::TaskList) {
+                self.focus_next();
+            }
         }
         let _ = self.handle_resize(None);
     }

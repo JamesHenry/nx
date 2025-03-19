@@ -32,6 +32,13 @@ test.describe('Nx TUI', () => {
       json.dependencies['@proj/my-pkg-1'] = 'file:../my-pkg-1';
       return json;
     });
+
+    // Prevent the TUI from automatically exiting after the tasks finish so that we can reliably capture screenshots
+    updateJson(`nx.json`, (json) => {
+      json.tui ??= {};
+      json.tui.autoExit = false;
+      return json;
+    });
   });
 
   test.describe('Task list navigation and terminal output pane toggling and pinning', () => {

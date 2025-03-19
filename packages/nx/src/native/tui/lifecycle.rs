@@ -9,6 +9,7 @@ use crate::native::pseudo_terminal::pseudo_terminal::{ParserArc, WriterArc};
 
 use super::app::App;
 use super::components::tasks_list::TaskStatus;
+use super::config::{AutoExit, TuiCliArgs as RustTuiCliArgs, TuiConfig as RustTuiConfig};
 use super::task::{
     Task as RustTask, TaskOverrides as RustTaskOverrides, TaskResult as RustTaskResult,
     TaskTarget as RustTaskTarget,
@@ -111,6 +112,46 @@ pub struct TaskMetadata {
     pub group_id: i32,
 }
 
+#[napi(object)]
+#[derive(Clone)]
+pub struct TuiCliArgs {
+    #[napi(ts_type = "string[] | undefined")]
+    pub targets: Option<Vec<String>>,
+
+    #[napi(ts_type = "boolean | number | undefined")]
+    pub tui_auto_exit: Option<Either<bool, u32>>,
+}
+
+impl From<TuiCliArgs> for RustTuiCliArgs {
+    fn from(js: TuiCliArgs) -> Self {
+        let js_auto_exit = js.tui_auto_exit.map(|value| match value {
+            Either::A(bool_value) => AutoExit::Boolean(bool_value),
+            Either::B(int_value) => AutoExit::Integer(int_value),
+        });
+        Self {
+            targets: js.targets.unwrap_or_default(),
+            tui_auto_exit: js_auto_exit,
+        }
+    }
+}
+
+#[napi(object)]
+pub struct TuiConfig {
+    #[napi(ts_type = "boolean | number | undefined")]
+    pub auto_exit: Option<Either<bool, u32>>,
+}
+
+impl From<(TuiConfig, &RustTuiCliArgs)> for RustTuiConfig {
+    fn from((js_tui_config, rust_tui_cli_args): (TuiConfig, &RustTuiCliArgs)) -> Self {
+        let js_auto_exit = js_tui_config.auto_exit.map(|value| match value {
+            Either::A(bool_value) => AutoExit::Boolean(bool_value),
+            Either::B(int_value) => AutoExit::Integer(int_value),
+        });
+        // Pass the converted JSON config value(s) and cli_args to instantiate the config with
+        RustTuiConfig::new(js_auto_exit, &rust_tui_cli_args)
+    }
+}
+
 #[napi]
 #[derive(Clone)]
 pub struct AppLifeCycle {
@@ -123,20 +164,24 @@ impl AppLifeCycle {
     pub fn new(
         tasks: Vec<Task>,
         pinned_tasks: Vec<String>,
-        nx_args: JsObject,
+        tui_cli_args: TuiCliArgs,
+        tui_config: TuiConfig,
     ) -> Self {
-        // Get the target names from nx_args.targets array
-        let target_names: Vec<String> = nx_args
-            .get::<_, Vec<String>>("targets")
-            .unwrap_or_else(|_| {
-                debug!("Failed to get targets from nx_args, defaulting to empty vec");
-                vec![].into()
-            })
-            .unwrap_or_default();
+        // Get the target names from nx_args.targets
+        let rust_tui_cli_args = tui_cli_args.into();
+
+        // Convert JSON TUI configuration to our Rust TuiConfig
+        let rust_tui_config = RustTuiConfig::from((tui_config, &rust_tui_cli_args));
 
         Self {
             app: Arc::new(std::sync::Mutex::new(
-                App::new(tasks.into_iter().map(|t| t.into()).collect(), target_names, pinned_tasks).unwrap(),
+                App::new(
+                    tasks.into_iter().map(|t| t.into()).collect(),
+                    rust_tui_cli_args.targets,
+                    pinned_tasks,
+                    rust_tui_config,
+                )
+                .unwrap(),
             )),
         }
     }
@@ -176,6 +221,14 @@ impl AppLifeCycle {
     ) -> napi::Result<()> {
         if let Ok(mut app) = self.app.lock() {
             app.end_tasks(task_results.into_iter().map(|r| r.into()).collect());
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub fn end_command(&self) -> napi::Result<()> {
+        if let Ok(mut app) = self.app.lock() {
+            app.end_command();
         }
         Ok(())
     }
@@ -254,15 +307,17 @@ impl AppLifeCycle {
                     if let Ok(mut app) = app_mutex.lock() {
                         app.handle_action(&mut tui, action, &action_tx);
 
-                        // Check if we should quit
-                        if app.should_quit {
-                            debug!("Quitting TUI");
-                            tui.stop().ok();
-                            debug!("Exiting TUI");
-                            tui.exit().ok();
-                            debug!("Calling exit callback");
-                            app.call_done_callback();
-                            break;
+                        // Check if we should quit based on the timer
+                        if let Some(quit_time) = app.quit_at {
+                            if std::time::Instant::now() >= quit_time {
+                                debug!("Quitting TUI");
+                                tui.stop().ok();
+                                debug!("Exiting TUI");
+                                tui.exit().ok();
+                                debug!("Calling exit callback");
+                                app.call_done_callback();
+                                break;
+                            }
                         }
                     }
                 }

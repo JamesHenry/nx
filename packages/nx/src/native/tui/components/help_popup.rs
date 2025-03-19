@@ -1,9 +1,4 @@
 use color_eyre::eyre::Result;
-use std::any::Any;
-
-use super::Component;
-use super::Frame;
-
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -13,7 +8,11 @@ use ratatui::{
         ScrollbarState,
     },
 };
+use std::any::Any;
+
 use crate::native::tui::app::AppState;
+
+use super::{Component, Frame};
 
 pub struct HelpPopup {
     scroll_offset: usize,
@@ -94,6 +93,7 @@ impl HelpPopup {
         let keybindings = vec![
             // Misc
             ("?", "Toggle this popup"),
+            ("<ctrl>+c", "Quit the TUI"),
             ("", ""),
             // Navigation
             ("↑ or k", "Navigate/scroll task output up"),

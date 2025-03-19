@@ -158,8 +158,9 @@ impl Tui {
                 self.task.abort();
             }
             if counter > 100 {
-                // TODO: Getting this error on angular-eslint when running the main command from ci.yml
-                log::error!("Failed to abort task in 100 milliseconds for unknown reason");
+                // This log is hit most of the time, but this condition does not seem to be problematic in practice
+                // TODO: Investigate this moore deeply
+                // log::error!("Failed to abort task in 100 milliseconds for unknown reason");
                 break;
             }
         }
