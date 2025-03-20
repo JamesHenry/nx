@@ -35,8 +35,11 @@ impl HelpText {
         if self.collapsed_mode {
             // Show minimal hint
             let hint = vec![
-                Span::styled("?", base_style.fg(Color::Cyan)),
-                Span::styled(" for help   ", base_style.fg(Color::DarkGray)),
+                Span::styled("quit: ", base_style.fg(Color::DarkGray)),
+                Span::styled("<ctrl>+c", base_style.fg(Color::Cyan)),
+                Span::styled("  ", base_style.fg(Color::DarkGray)),
+                Span::styled("help: ", base_style.fg(Color::DarkGray)),
+                Span::styled("?  ", base_style.fg(Color::Cyan)),
             ];
             f.render_widget(
                 Paragraph::new(Line::from(hint)).alignment(if self.align_left {
@@ -49,21 +52,24 @@ impl HelpText {
         } else {
             // Show full shortcuts
             let shortcuts = vec![
+                Span::styled("quit: ", base_style.fg(Color::DarkGray)),
+                Span::styled("<ctrl>+c", base_style.fg(Color::Cyan)),
+                Span::styled("  ", base_style.fg(Color::DarkGray)),
                 Span::styled("help: ", base_style.fg(Color::DarkGray)),
                 Span::styled("?", base_style.fg(Color::Cyan)),
-                Span::styled(" | ", base_style.fg(Color::DarkGray)),
+                Span::styled("  ", base_style.fg(Color::DarkGray)),
                 Span::styled("navigate: ", base_style.fg(Color::DarkGray)),
                 Span::styled("↑ ↓", base_style.fg(Color::Cyan)),
-                Span::styled(" | ", base_style.fg(Color::DarkGray)),
+                Span::styled("  ", base_style.fg(Color::DarkGray)),
                 Span::styled("filter: ", base_style.fg(Color::DarkGray)),
                 Span::styled("/", base_style.fg(Color::Cyan)),
-                Span::styled(" | ", base_style.fg(Color::DarkGray)),
+                Span::styled("  ", base_style.fg(Color::DarkGray)),
                 Span::styled("pin output: ", base_style.fg(Color::DarkGray)),
                 Span::styled("", base_style.fg(Color::DarkGray)),
                 Span::styled("1", base_style.fg(Color::Cyan)),
                 Span::styled(" or ", base_style.fg(Color::DarkGray)),
                 Span::styled("2", base_style.fg(Color::Cyan)),
-                Span::styled(" | ", base_style.fg(Color::DarkGray)),
+                Span::styled("  ", base_style.fg(Color::DarkGray)),
                 Span::styled("focus output: ", base_style.fg(Color::DarkGray)),
                 Span::styled("<tab>", base_style.fg(Color::Cyan)),
             ];
