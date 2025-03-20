@@ -544,6 +544,20 @@ export interface NxJsonConfiguration<T = '*' | string[]> {
    * Use the legacy file system cache instead of the db cache
    */
   useLegacyCache?: boolean;
+
+  /**
+   * Settings for the Nx Terminal User Interface (TUI)
+   */
+  tui?: {
+    /**
+     * Whether or not to exit the TUI automatically after all tasks finish.
+     *
+     * - If set to `true`, the TUI will exit immediately.
+     * - If set to `false` the TUI will not automatically exit.
+     * - If set to a number, an interruptible countdown popup will be shown for that many seconds before the TUI exits.
+     */
+    autoExit?: boolean | number;
+  };
 }
 
 export type PluginConfiguration = string | ExpandedPluginConfiguration;

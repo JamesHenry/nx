@@ -17,6 +17,7 @@ pub mod pagination;
 pub mod task_selection_manager;
 pub mod tasks_list;
 pub mod terminal_pane;
+pub mod countdown_popup; 
 
 pub trait Component: Any + Send {
     #[allow(unused_variables)]

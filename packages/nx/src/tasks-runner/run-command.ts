@@ -97,7 +97,12 @@ async function getTerminalOutputLifeCycle(
       }
     }
 
-    const lifeCycle = new AppLifeCycle(tasks, pinnedTasks, nxArgs);
+    const lifeCycle = new AppLifeCycle(
+      tasks,
+      pinnedTasks,
+      nxArgs ?? {},
+      nxJson.tui ?? {}
+    );
 
     const renderIsDone = new Promise<void>((resolve) => {
       lifeCycle.__init(() => {
