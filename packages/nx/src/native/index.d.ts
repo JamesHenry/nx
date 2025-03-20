@@ -8,11 +8,12 @@ export declare class ExternalObject<T> {
   }
 }
 export declare class AppLifeCycle {
-  constructor(tasks: Array<Task>, pinnedTasks: Array<string>, nxArgs: object)
+  constructor(tasks: Array<Task>, pinnedTasks: Array<string>, tuiCliArgs: TuiCliArgs, tuiConfig: TuiConfig)
   scheduleTask(task: Task): void
   startTasks(tasks: Array<Task>, metadata: object): void
   printTaskTerminalOutput(task: Task, status: string, output: string): void
   endTasks(taskResults: Array<TaskResult>, metadata: TaskMetadata): void
+  endCommand(): void
   __init(doneCallback: () => any): void
   registerRunningTask(taskId: string, parserAndWriter: ExternalObject<[ParserArc, WriterArc]>): void
   __setCloudMessage(message: string): Promise<void>
@@ -338,6 +339,15 @@ export declare export function testOnlyTransferFileMap(projectFiles: Record<stri
  * This wont be needed once the project graph is created in Rust
  */
 export declare export function transferProjectGraph(projectGraph: ProjectGraph): ExternalObject<ProjectGraph>
+
+export interface TuiCliArgs {
+  targets?: string[] | undefined
+  tuiAutoExit?: boolean | number | undefined
+}
+
+export interface TuiConfig {
+  autoExit?: boolean | number | undefined
+}
 
 export interface UpdatedWorkspaceFiles {
   fileMap: FileMap

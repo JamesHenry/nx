@@ -13,14 +13,19 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
 use crate::native::pseudo_terminal::pseudo_terminal::{ParserArc, WriterArc};
-use crate::native::tui::components::tasks_list::TaskStatus;
 use crate::native::tui::tui::Tui;
 
+use super::config::TuiConfig;
 use super::task::{Task, TaskResult};
 use super::utils::is_cache_hit;
 use super::{
     action::Action,
-    components::{help_popup::HelpPopup, tasks_list::TasksList, Component},
+    components::{
+        countdown_popup::CountdownPopup,
+        help_popup::HelpPopup,
+        tasks_list::{TaskStatus, TasksList},
+        Component,
+    },
     tui,
 };
 
@@ -29,12 +34,13 @@ pub struct AppState {}
 
 pub struct App {
     pub components: Vec<Box<dyn Component>>,
-    pub should_quit: bool,
+    pub quit_at: Option<std::time::Instant>,
     pub last_tick_key_events: Vec<KeyEvent>,
     state: AppState,
     focus: Focus,
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
+    tui_config: TuiConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +48,7 @@ pub enum Focus {
     TaskList,
     MultipleOutput(usize),
     HelpPopup,
+    CountdownPopup,
 }
 
 impl App {
@@ -49,20 +56,27 @@ impl App {
         tasks: Vec<Task>,
         target_names: Vec<String>,
         pinned_tasks: Vec<String>,
+        tui_config: TuiConfig,
     ) -> Result<Self> {
         let tasks_list = TasksList::new(tasks, target_names, pinned_tasks);
         let help_popup = HelpPopup::new();
+        let countdown_popup = CountdownPopup::new();
         let focus = tasks_list.get_focus();
-        let components: Vec<Box<dyn Component>> = vec![Box::new(tasks_list), Box::new(help_popup)];
+        let components: Vec<Box<dyn Component>> = vec![
+            Box::new(tasks_list),
+            Box::new(help_popup),
+            Box::new(countdown_popup),
+        ];
 
         Ok(Self {
             components,
             state: Default::default(),
-            should_quit: false,
+            quit_at: None,
             last_tick_key_events: Vec::new(),
             focus,
             previous_focus: Focus::TaskList,
             done_callback: None,
+            tui_config,
         })
     }
 
@@ -109,6 +123,52 @@ impl App {
         }
     }
 
+    // Show countdown popup for the configured duration (making sure the help popup is not open first)
+    pub fn end_command(&mut self) {
+        // If auto-exit is disabled, do nothing
+        if !self.tui_config.auto_exit.should_exit_automatically() {
+            return;
+        }
+
+        // First, ensure the help popup is hidden
+        if let Some(help_popup) = self
+            .components
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<HelpPopup>())
+        {
+            help_popup.set_visible(false);
+            // Set the focus back to the previous state before the help popup, in case the user escapes out of the countdown popup
+            self.focus = self.previous_focus;
+        }
+
+        // Make sure all components are updated with the current state
+        for component in self.components.iter_mut() {
+            let _ = component.update(Action::Render, &mut self.state);
+        }
+
+        let countdown_duration = self.tui_config.auto_exit.countdown_seconds();
+        // If countdown is disabled, exit immediately
+        if countdown_duration.is_none() {
+            self.quit_at = Some(std::time::Instant::now());
+            return;
+        }
+
+        // Otherwise, show the countdown popup for the configured duration
+        let countdown_duration = countdown_duration.unwrap() as u64;
+        if let Some(countdown_popup) = self
+            .components
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
+        {
+            countdown_popup.start_countdown(countdown_duration);
+            self.previous_focus = self.focus;
+            self.focus = Focus::CountdownPopup;
+            self.quit_at = Some(
+                std::time::Instant::now() + std::time::Duration::from_secs(countdown_duration),
+            );
+        }
+    }
+
     // A pseudo-terminal running task will provide the parser and writer directly
     pub fn register_running_task(
         &mut self,
@@ -143,6 +203,8 @@ impl App {
                 debug!("Handling Key Event: {:?}", key);
                 // Handle Ctrl+C to quit
                 if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+                    // Quit immediately
+                    self.quit_at = Some(std::time::Instant::now());
                     return Ok(true);
                 }
 
@@ -152,8 +214,11 @@ impl App {
                     .iter_mut()
                     .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
                 {
-                    // Only handle '?' key if we're not in interactive mode
-                    if matches!(key.code, KeyCode::Char('?')) && !tasks_list.is_interactive_mode() {
+                    // Only handle '?' key if we're not in interactive mode and the countdown popup is not open
+                    if matches!(key.code, KeyCode::Char('?'))
+                        && !tasks_list.is_interactive_mode()
+                        && !matches!(self.focus, Focus::CountdownPopup)
+                    {
                         let show_help_popup = !matches!(self.focus, Focus::HelpPopup);
                         if let Some(help_popup) = self
                             .components
@@ -170,6 +235,46 @@ impl App {
                         }
                         return Ok(false);
                     }
+                }
+
+                // If countdown popup is open, handle its keyboard events
+                if matches!(self.focus, Focus::CountdownPopup) {
+                    match key.code {
+                        KeyCode::Esc => {
+                            if let Some(countdown_popup) = self
+                                .components
+                                .iter_mut()
+                                .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
+                            {
+                                countdown_popup.cancel_countdown();
+                            }
+                            self.quit_at = None;
+                            self.focus = self.previous_focus;
+                            return Ok(false);
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if let Some(countdown_popup) = self
+                                .components
+                                .iter_mut()
+                                .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
+                            {
+                                countdown_popup.scroll_up();
+                            }
+                            return Ok(false);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if let Some(countdown_popup) = self
+                                .components
+                                .iter_mut()
+                                .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
+                            {
+                                countdown_popup.scroll_down();
+                            }
+                            return Ok(false);
+                        }
+                        _ => {}
+                    }
+                    return Ok(false);
                 }
 
                 // If shortcuts popup is open, handle its keyboard events
@@ -260,6 +365,7 @@ impl App {
                                     }
                                     KeyCode::Char('b') => {
                                         tasks_list.toggle_task_list();
+                                        self.focus = tasks_list.get_focus();
                                     }
                                     _ => {
                                         // Forward other keys for interactivity, scrolling (j/k) etc
@@ -367,8 +473,10 @@ impl App {
                                                             '0' => tasks_list.clear_all_panes(),
                                                             'h' => tasks_list.previous_page(),
                                                             'l' => tasks_list.next_page(),
-                                                            'b' => tasks_list.toggle_task_list(),
-                                                            'q' => self.should_quit = true,
+                                                            'b' => {
+                                                                tasks_list.toggle_task_list();
+                                                                self.focus = tasks_list.get_focus();
+                                                            }
                                                             _ => {}
                                                         }
                                                     }
@@ -439,6 +547,9 @@ impl App {
                                 Focus::HelpPopup => {
                                     // Shortcuts popup has its own key handling above
                                 }
+                                Focus::CountdownPopup => {
+                                    // Countdown popup has its own key handling above
+                                }
                             }
                         }
                     }
@@ -504,7 +615,13 @@ impl App {
             Action::Tick => {
                 self.last_tick_key_events.drain(..);
             }
-            Action::Quit => self.should_quit = true,
+            // Quit immediately
+            Action::Quit => self.quit_at = Some(std::time::Instant::now()),
+            // Cancel quitting
+            Action::CancelQuit => {
+                self.quit_at = None;
+                self.focus = self.previous_focus;
+            }
             Action::Resize(w, h) => {
                 tui.resize(Rect::new(0, 0, w, h)).ok();
 
@@ -576,13 +693,13 @@ impl App {
                     }
 
                     // Only render components if viewport is large enough
-                    // Draw main components with dimming if popup is focused
+                    // Draw main components with dimming if a popup is focused
                     let current_focus = self.focus();
                     for component in self.components.iter_mut() {
                         if let Some(tasks_list) =
                             component.as_any_mut().downcast_mut::<TasksList>()
                         {
-                            tasks_list.set_dimmed(matches!(current_focus, Focus::HelpPopup));
+                            tasks_list.set_dimmed(matches!(current_focus, Focus::HelpPopup | Focus::CountdownPopup));
                             tasks_list.set_focus(current_focus);
                         }
                         let r = component.draw(f, f.area(), &mut self.state);

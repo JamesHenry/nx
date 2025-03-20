@@ -6,6 +6,7 @@ pub enum Action {
     Render,
     Resize(u16, u16),
     Quit,
+    CancelQuit,
     Error(String),
     Help,
     // Task list actions
