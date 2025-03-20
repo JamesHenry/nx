@@ -51,9 +51,13 @@ export function getTuiTerminalSummaryLifeCycle({
     string,
     { terminalOutput: string; taskStatus: TaskStatus }
   > = {};
+  const failingTaskIdsInOrderOfCompletion: string[] = [];
 
   lifeCycle.printTaskTerminalOutput = (task, taskStatus, terminalOutput) => {
     tasksToTerminalOutputs[task.id] = { terminalOutput, taskStatus };
+    if (taskStatus === 'failure') {
+      failingTaskIdsInOrderOfCompletion.push(task.id);
+    }
   };
 
   lifeCycle.endTasks = (taskResults) => {
@@ -88,16 +92,22 @@ export function getTuiTerminalSummaryLifeCycle({
       return;
     }
 
+    const initiatingTaskId = initiatingProject
+      ? createTaskId(initiatingProject, targets[0], args.configuration)
+      : null;
+
+    for (const taskId of failingTaskIdsInOrderOfCompletion) {
+      if (taskId !== initiatingTaskId) {
+        const { terminalOutput, taskStatus } = tasksToTerminalOutputs[taskId];
+        output.logCommandOutput(taskId, taskStatus, terminalOutput);
+      }
+    }
+
     if (initiatingProject && targets?.length === 1) {
-      const ranTask = createTaskId(
-        initiatingProject,
-        targets[0],
-        args.configuration
-      );
-      const results = tasksToTerminalOutputs[ranTask];
-      if (ranTask && results) {
+      const results = tasksToTerminalOutputs[initiatingTaskId];
+      if (results) {
         output.logCommandOutput(
-          ranTask,
+          initiatingTaskId,
           results.taskStatus,
           results.terminalOutput
         );
