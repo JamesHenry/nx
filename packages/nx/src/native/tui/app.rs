@@ -41,6 +41,8 @@ pub struct App {
     previous_focus: Focus,
     done_callback: Option<ThreadsafeFunction<(), ErrorStrategy::Fatal>>,
     tui_config: TuiConfig,
+    // We track whether the user has interacted with the app to determine if we should show perform any auto-exit at all
+    user_has_interacted: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +79,7 @@ impl App {
             previous_focus: Focus::TaskList,
             done_callback: None,
             tui_config,
+            user_has_interacted: false,
         })
     }
 
@@ -125,8 +128,8 @@ impl App {
 
     // Show countdown popup for the configured duration (making sure the help popup is not open first)
     pub fn end_command(&mut self) {
-        // If auto-exit is disabled, do nothing
-        if !self.tui_config.auto_exit.should_exit_automatically() {
+        // If the user has interacted with the app, or auto-exit is disabled, do nothing
+        if self.user_has_interacted || !self.tui_config.auto_exit.should_exit_automatically() {
             return;
         }
 
@@ -201,6 +204,10 @@ impl App {
             tui::Event::Resize(x, y) => action_tx.send(Action::Resize(x, y))?,
             tui::Event::Key(key) => {
                 debug!("Handling Key Event: {:?}", key);
+
+                // Record that the user has interacted with the app
+                self.user_has_interacted = true;
+
                 // Handle Ctrl+C to quit
                 if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
                     // Quit immediately
@@ -239,41 +246,35 @@ impl App {
 
                 // If countdown popup is open, handle its keyboard events
                 if matches!(self.focus, Focus::CountdownPopup) {
-                    match key.code {
-                        KeyCode::Esc => {
-                            if let Some(countdown_popup) = self
-                                .components
-                                .iter_mut()
-                                .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
-                            {
-                                countdown_popup.cancel_countdown();
-                            }
+                    // Any key pressed (other than scroll keys if the popup is scrollable) will cancel the countdown
+                    if let Some(countdown_popup) = self
+                        .components
+                        .iter_mut()
+                        .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
+                    {
+                        if !countdown_popup.is_scrollable() {
+                            countdown_popup.cancel_countdown();
                             self.quit_at = None;
                             self.focus = self.previous_focus;
                             return Ok(false);
                         }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if let Some(countdown_popup) = self
-                                .components
-                                .iter_mut()
-                                .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
-                            {
+                        match key.code {
+                            KeyCode::Up | KeyCode::Char('k') => {
                                 countdown_popup.scroll_up();
+                                return Ok(false);
                             }
-                            return Ok(false);
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if let Some(countdown_popup) = self
-                                .components
-                                .iter_mut()
-                                .find_map(|c| c.as_any_mut().downcast_mut::<CountdownPopup>())
-                            {
+                            KeyCode::Down | KeyCode::Char('j') => {
                                 countdown_popup.scroll_down();
+                                return Ok(false);
                             }
-                            return Ok(false);
+                            _ => {
+                                countdown_popup.cancel_countdown();
+                                self.quit_at = None;
+                                self.focus = self.previous_focus;
+                            }
                         }
-                        _ => {}
                     }
+
                     return Ok(false);
                 }
 
@@ -556,6 +557,9 @@ impl App {
                 }
             }
             tui::Event::Mouse(mouse) => {
+                // Record that the user has interacted with the app
+                self.user_has_interacted = true;
+
                 if let Some(tasks_list) = self
                     .components
                     .iter_mut()

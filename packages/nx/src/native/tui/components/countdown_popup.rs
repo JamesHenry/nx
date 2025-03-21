@@ -37,6 +37,10 @@ impl CountdownPopup {
         }
     }
 
+    pub fn is_scrollable(&self) -> bool {
+        self.content_height > self.viewport_height
+    }
+
     pub fn start_countdown(&mut self, duration_secs: u64) {
         self.visible = true;
         self.start_time = Some(Instant::now());
@@ -94,8 +98,8 @@ impl CountdownPopup {
     }
 
     pub fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
-        let popup_height = 15; // Increased height for more content
-        let popup_width = 120; // Width in columns for text display
+        let popup_height = 9;
+        let popup_width = 70;
 
         // Make sure we don't exceed the available area
         let popup_height = popup_height.min(area.height.saturating_sub(4));
@@ -121,68 +125,27 @@ impl CountdownPopup {
         };
 
         let time_remaining = seconds_remaining + 1;
-        let time_text = if time_remaining == 1 {
-            "1 second".to_string()
-        } else {
-            format!("{} seconds", time_remaining)
-        };
 
         let content = vec![
             Line::from(vec![
+                Span::styled("• Press ", Style::default().fg(Color::DarkGray)),
+                Span::styled("any key", Style::default().fg(Color::Cyan)),
                 Span::styled(
-                    "The TUI will automatically quit and print a summary of the tasks in ",
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    time_text,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "...",
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]).alignment(Alignment::Center),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                Style::default().fg(Color::DarkGray),
-            )]).alignment(Alignment::Center),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "• Press ",
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled("<esc>", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    " to keep the TUI running and interactively explore the task results.",
+                    " to keep the TUI running and interactively explore the results.",
                     Style::default().fg(Color::DarkGray),
                 ),
             ]),
             Line::from(""),
             Line::from(vec![
                 Span::styled(
-                    "• You can manually quit the TUI at any time by pressing ",
+                    "• Learn how to configure auto-exit and more in the docs: ",
                     Style::default().fg(Color::DarkGray),
                 ),
-                Span::styled("<ctrl>+c", Style::default().fg(Color::Cyan)),
-            ]),
-            Line::from(""),
-            Line::from(vec![
                 Span::styled(
-                    "• You can prevent this message from showing in future, and immediately quit after the tasks finish, by setting ",
-                    Style::default().fg(Color::DarkGray),
+                    // NOTE: I tried OSC 8 sequences here but they broke the layout, see: https://github.com/ratatui/ratatui/issues/1028
+                    "https://nx.dev/terminal-ui",
+                    Style::default().fg(Color::Cyan),
                 ),
-                Span::styled("\"tui\": { \"autoExit\": true }", Style::default().fg(Color::Cyan)),
-                Span::styled(" in your nx.json, or passing the ", Style::default().fg(Color::DarkGray)),
-                Span::styled("--tui-auto-exit=true", Style::default().fg(Color::Cyan)),
-                Span::styled(" flag on the Nx CLI.", Style::default().fg(Color::DarkGray)),
             ]),
         ];
 
@@ -196,7 +159,12 @@ impl CountdownPopup {
                         .bg(Color::Cyan)
                         .fg(Color::Black),
                 ),
-                Span::styled("  All tasks completed  ", Style::default().fg(Color::White)),
+                Span::styled("  Exiting in ", Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{}", time_remaining),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled("...  ", Style::default().fg(Color::White)),
             ]))
             .title_alignment(Alignment::Left)
             .borders(Borders::ALL)

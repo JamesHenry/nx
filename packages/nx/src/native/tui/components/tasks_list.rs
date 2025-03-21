@@ -1087,8 +1087,15 @@ impl Component for TasksList {
                         let buffer_space = 3; // Add a buffer space between title and message
 
                         // Define styles
-                        let dimmed_style = Style::default().fg(Color::DarkGray);
-                        let url_style = Style::default().fg(Color::LightCyan).bold().underlined();
+                        let mut non_url_style = Style::default().fg(Color::DarkGray);
+                        let mut url_style =
+                            Style::default().fg(Color::LightCyan).bold().underlined();
+
+                        // Apply dim modifier if the component is dimmed
+                        if self.is_dimmed {
+                            non_url_style = non_url_style.dim();
+                            url_style = url_style.dim();
+                        }
 
                         // Case 1: Enough space for everything (prefix + URL + buffer)
                         if available_width >= content_width + total_message_width + buffer_space {
@@ -1098,7 +1105,7 @@ impl Component for TasksList {
                             title_text.push(Span::raw(" ".repeat(padding_width)));
 
                             // Add the message parts with appropriate styling
-                            title_text.push(Span::styled(prefix, dimmed_style));
+                            title_text.push(Span::styled(prefix, non_url_style));
                             title_text.push(Span::styled(url, url_style));
                         }
                         // Case 2: Only enough space for URL + buffer (no prefix)
@@ -1129,7 +1136,7 @@ impl Component for TasksList {
 
                             // Add ellipsis if we truncated the title (with dimmed styling)
                             if title_text.len() < original_title_len {
-                                title_text.push(Span::styled("...", dimmed_style));
+                                title_text.push(Span::styled("...", non_url_style));
                             }
 
                             // Add padding to ensure URL is right-aligned
