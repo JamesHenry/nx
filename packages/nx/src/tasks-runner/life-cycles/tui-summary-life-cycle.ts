@@ -1,7 +1,4 @@
-import * as cliCursor from 'cli-cursor';
-import { dots } from 'cli-spinners';
 import { EOL } from 'os';
-import * as readline from 'readline';
 import { output } from '../../utils/output';
 import type { LifeCycle } from '../life-cycle';
 import type { TaskStatus } from '../tasks-runner';
@@ -31,11 +28,6 @@ export function getTuiTerminalSummaryLifeCycle({
 }) {
   const lifeCycle = {} as Partial<LifeCycle>;
 
-  let resolveRenderIsDonePromise: (value: void) => void;
-  const renderIsDone = new Promise<void>(
-    (resolve) => (resolveRenderIsDonePromise = resolve)
-  );
-
   const start = process.hrtime();
   const targets = args.targets;
   const totalTasks = tasks.length;
@@ -47,22 +39,28 @@ export function getTuiTerminalSummaryLifeCycle({
   let timeTakenText: string;
 
   const failedTasks = new Set<string>();
+  const inProgressTasks = new Set<string>();
   const tasksToTerminalOutputs: Record<
     string,
     { terminalOutput: string; taskStatus: TaskStatus }
   > = {};
-  const failingTaskIdsInOrderOfCompletion: string[] = [];
+  const taskIdsInOrderOfCompletion: string[] = [];
+
+  lifeCycle.startTasks = (tasks) => {
+    for (let t of tasks) {
+      inProgressTasks.add(t.id);
+    }
+  };
 
   lifeCycle.printTaskTerminalOutput = (task, taskStatus, terminalOutput) => {
     tasksToTerminalOutputs[task.id] = { terminalOutput, taskStatus };
-    if (taskStatus === 'failure') {
-      failingTaskIdsInOrderOfCompletion.push(task.id);
-    }
+    taskIdsInOrderOfCompletion.push(task.id);
   };
 
   lifeCycle.endTasks = (taskResults) => {
     for (let t of taskResults) {
       totalCompletedTasks++;
+      inProgressTasks.delete(t.task.id);
 
       switch (t.status) {
         case 'remote-cache':
@@ -87,6 +85,13 @@ export function getTuiTerminalSummaryLifeCycle({
   };
 
   const printSummary = () => {
+    const lines = [''];
+    // Handles when the user interrupts the process
+    timeTakenText ??= prettyTime(process.hrtime(start));
+
+    // Treats cancellation as a failure
+    const failure = totalFailedTasks > 0 || inProgressTasks.size > 0;
+
     if (totalTasks === 0) {
       console.log(output.applyNxPrefix('gray', 'No tasks were run'));
       return;
@@ -96,10 +101,33 @@ export function getTuiTerminalSummaryLifeCycle({
       ? createTaskId(initiatingProject, targets[0], args.configuration)
       : null;
 
-    for (const taskId of failingTaskIdsInOrderOfCompletion) {
+    for (const taskId of taskIdsInOrderOfCompletion) {
       if (taskId !== initiatingTaskId) {
         const { terminalOutput, taskStatus } = tasksToTerminalOutputs[taskId];
-        output.logCommandOutput(taskId, taskStatus, terminalOutput);
+        if (taskStatus === 'failure') {
+          output.logCommandOutput(taskId, taskStatus, terminalOutput);
+          lines.push(
+            `${LEFT_PAD}${output.colors.red(
+              figures.cross
+            )}${SPACER}${output.colors.gray('nx run ')}${taskId}`
+          );
+        } else {
+          lines.push(
+            `${LEFT_PAD}${output.colors.green(
+              figures.tick
+            )}${SPACER}${output.colors.gray('nx run ')}${taskId}`
+          );
+        }
+      }
+    }
+
+    for (const taskId of inProgressTasks) {
+      if (taskId !== initiatingTaskId) {
+        lines.push(
+          `${LEFT_PAD}${output.colors.cyan(
+            figures.circleDotted
+          )}${SPACER}${taskId}`
+        );
       }
     }
 
@@ -111,11 +139,16 @@ export function getTuiTerminalSummaryLifeCycle({
           results.taskStatus,
           results.terminalOutput
         );
-        output.addVerticalSeparator('gray');
+        output.addVerticalSeparator(failure ? 'red' : 'green');
       }
+    } else if (totalTasks > 0) {
+      lines.push(
+        ...output.getVerticalSeparatorLines(failure ? 'red' : 'green')
+      );
     }
 
     if (totalSuccessfulTasks === totalTasks) {
+      const successSummaryRows = [];
       const text = `Successfully ran ${formatTargetsAndProjects(
         projectNames,
         targets,
@@ -134,27 +167,27 @@ export function getTuiTerminalSummaryLifeCycle({
           .forEach((arg) => taskOverridesRows.push(arg));
       }
 
-      const lines = [
-        output.applyNxPrefix(
-          'green',
-          output.colors.green(text) + output.dim.white(` (${timeTakenText})`)
-        ),
-        ...taskOverridesRows,
-      ];
+      successSummaryRows.push(
+        ...[
+          output.applyNxPrefix(
+            'green',
+            output.colors.green(text) + output.dim.white(` (${timeTakenText})`)
+          ),
+          ...taskOverridesRows,
+        ]
+      );
       if (totalCachedTasks > 0) {
-        lines.push(
+        successSummaryRows.push(
           output.dim(
             `${EOL}Nx read the output from the cache instead of running the command for ${totalCachedTasks} out of ${totalTasks} tasks.`
           )
         );
       }
-      console.log(output.colors.green(lines.join(EOL)));
+      lines.push(output.colors.green(successSummaryRows.join(EOL)));
     } else {
-      const text = `Ran ${formatTargetsAndProjects(
-        projectNames,
-        targets,
-        tasks
-      )}`;
+      const text = `${
+        inProgressTasks.size ? 'Cancelled while running' : 'Ran'
+      } ${formatTargetsAndProjects(projectNames, targets, tasks)}`;
       const taskOverridesRows = [];
       if (Object.keys(overrides).length > 0) {
         taskOverridesRows.push('');
@@ -214,8 +247,13 @@ export function getTuiTerminalSummaryLifeCycle({
 
       failureSummaryRows.push(...viewLogsFooterRows(failedTasks.size));
 
-      console.log(output.colors.red(failureSummaryRows.join(EOL)));
+      lines.push(output.colors.red(failureSummaryRows.join(EOL)));
     }
+
+    // adds some vertical space after the summary to avoid bunching against terminal
+    lines.push('');
+
+    console.log(lines.join(EOL));
   };
   return { lifeCycle, printSummary };
 }

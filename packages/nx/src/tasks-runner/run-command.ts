@@ -78,6 +78,9 @@ async function getTerminalOutputLifeCycle(
   nxJson: NxJsonConfiguration,
   overrides: Record<string, unknown>
 ): Promise<{ lifeCycle: LifeCycle; renderIsDone: Promise<void> }> {
+  const overridesWithoutHidden = { ...overrides };
+  delete overridesWithoutHidden['__overrides_unparsed__'];
+
   if (process.env.NX_TUI === 'true') {
     const { AppLifeCycle, restoreTerminal } = await import('../native');
 
@@ -110,7 +113,7 @@ async function getTerminalOutputLifeCycle(
         projectNames,
         tasks,
         args: nxArgs,
-        overrides,
+        overrides: overridesWithoutHidden,
         initiatingProject,
       });
 
@@ -174,9 +177,6 @@ async function getTerminalOutputLifeCycle(
     runnerOptions,
     nxArgs.outputStyle
   );
-
-  const overridesWithoutHidden = { ...overrides };
-  delete overridesWithoutHidden['__overrides_unparsed__'];
 
   if (isRunOne) {
     if (useDynamicOutput) {
