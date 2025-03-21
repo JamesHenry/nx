@@ -65,6 +65,7 @@ import {
 import { TasksRunner, TaskStatus } from './tasks-runner';
 import { shouldStreamOutput } from './utils';
 import chalk = require('chalk');
+import { getTuiTerminalSummaryLifeCycle } from './life-cycles/tui-summary-life-cycle';
 
 const originalStdoutWrite = process.stdout.write;
 
@@ -104,6 +105,15 @@ async function getTerminalOutputLifeCycle(
       nxJson.tui ?? {}
     );
 
+    const { lifeCycle: tsLifeCycle, printSummary } =
+      getTuiTerminalSummaryLifeCycle({
+        projectNames,
+        tasks,
+        args: nxArgs,
+        overrides,
+        initiatingProject,
+      });
+
     const renderIsDone = new Promise<void>((resolve) => {
       lifeCycle.__init(() => {
         resolve();
@@ -115,6 +125,7 @@ async function getTerminalOutputLifeCycle(
       .finally(() => {
         // Revert the patched stdout.write method
         process.stdout.write = originalStdoutWrite;
+        printSummary();
       });
 
     /**
@@ -151,7 +162,7 @@ async function getTerminalOutputLifeCycle(
     process.stdout.write = createPatchedLogWrite(originalStdoutWrite);
 
     return {
-      lifeCycle,
+      lifeCycle: new CompositeLifeCycle([lifeCycle, tsLifeCycle]),
       renderIsDone,
     };
   }
