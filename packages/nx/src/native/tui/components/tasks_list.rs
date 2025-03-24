@@ -38,6 +38,7 @@ const CACHE_STATUS_LOCAL: &str = "Local";
 const CACHE_STATUS_REMOTE: &str = "Remote";
 const CACHE_STATUS_NOT_YET_KNOWN: &str = "...";
 const CACHE_STATUS_NOT_APPLICABLE: &str = "-";
+const MAX_PARALLEL: usize = 3; // Max parallel tasks to display in the UI
 
 /// Represents an individual task with its current state and execution details.
 pub struct TaskItem {
@@ -169,6 +170,7 @@ pub struct TasksList {
     target_names: Vec<String>,
     task_list_hidden: bool,
     cloud_message: Option<String>,
+    max_parallel: usize, // Maximum number of parallel tasks
 }
 
 impl TasksList {
@@ -216,6 +218,7 @@ impl TasksList {
             target_names,
             task_list_hidden: false,
             cloud_message: None,
+            max_parallel: MAX_PARALLEL,
         }
     }
 
@@ -288,19 +291,35 @@ impl TasksList {
 
         let mut entries = Vec::new();
 
-        // Add in-progress tasks
-        entries.extend(in_progress.into_iter().map(Some));
+        // Check if there are any in-progress tasks
+        let has_in_progress = !in_progress.is_empty();
 
-        // Add separator after in-progress tasks if there were any and if there are completed tasks
-        if !entries.is_empty() && !completed.is_empty() {
+        // Check if there are any tasks that need to be run
+        let has_tasks_to_run = !in_progress.is_empty() || !pending.is_empty();
+
+        // Only show the parallel section if there are tasks in progress or pending
+        if has_tasks_to_run {
+            // Create a fixed section for in-progress tasks (MAX_PARALLEL slots)
+            // Add actual in-progress tasks
+            entries.extend(in_progress.iter().map(|name| Some(name.clone())));
+
+            // Fill remaining slots with None up to MAX_PARALLEL
+            let in_progress_count = in_progress.len();
+            if in_progress_count < MAX_PARALLEL {
+                // When we have fewer InProgress tasks than MAX_PARALLEL, fill the remaining slots
+                // with empty placeholder rows to maintain the fixed height
+                entries.extend(std::iter::repeat(None).take(MAX_PARALLEL - in_progress_count));
+            }
+
+            // Always add a separator after the parallel tasks section
             entries.push(None);
         }
 
         // Add completed tasks
-        entries.extend(completed.into_iter().map(Some));
+        entries.extend(completed.iter().map(|name| Some(name.clone())));
 
-        // Add separator before pending tasks if there are any pending tasks and if there were any previous tasks
-        if !pending.is_empty() && !entries.is_empty() {
+        // Add separator before pending tasks if there are any pending tasks and completed tasks exist
+        if !pending.is_empty() && !completed.is_empty() {
             entries.push(None);
         }
 
@@ -308,6 +327,18 @@ impl TasksList {
         entries.extend(pending.into_iter().map(Some));
 
         entries
+    }
+
+    // Add a helper method to safely check if we should show the parallel section
+    fn should_show_parallel_section(&self) -> bool {
+        // Only show the parallel section if we're on the first page and have tasks in progress or pending
+        let is_first_page = self.selection_manager.get_current_page() == 0;
+        let has_active_tasks = self
+            .tasks
+            .iter()
+            .any(|t| matches!(t.status, TaskStatus::InProgress | TaskStatus::NotStarted));
+
+        is_first_page && has_active_tasks
     }
 
     /// Recalculates the number of items that can be displayed per page based on the available height.
@@ -781,8 +812,14 @@ impl TasksList {
                     })
                     .count();
 
+                // Don't show anything if completed is 0 (no tasks have run yet)
+                if completed == 0 {
+                    String::new()
+                }
                 // Calculate total duration if we have start/end times
-                if let Some(first_start) = self.tasks.iter().filter_map(|t| t.start_time).min() {
+                else if let Some(first_start) =
+                    self.tasks.iter().filter_map(|t| t.start_time).min()
+                {
                     if let Some(last_end) = self.tasks.iter().filter_map(|t| t.end_time).max() {
                         format!(
                             "Completed {} tasks in {}",
@@ -798,29 +835,97 @@ impl TasksList {
             } else if collapsed_mode {
                 format!("{}/{} remaining...", running, remaining)
             } else {
-                format!("Executing {}/{} remaining tasks...", running, remaining)
+                // Only show max parallel info if there are tasks in progress
+                if running > 0 {
+                    format!(
+                        "Executing {}/{} remaining tasks... (max parallel: {})",
+                        running, remaining, self.max_parallel
+                    )
+                } else {
+                    format!("Executing {}/{} remaining tasks...", running, remaining)
+                }
             };
 
             if collapsed_mode {
                 vec![
                     Cell::from("").style(status_style),
-                    Cell::from(status_text).style(status_style),
+                    Cell::from(status_text.clone()).style(
+                        if running == 0 && remaining == 0 && !status_text.is_empty() {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else if running > 0 {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            status_style
+                        },
+                    ),
                 ]
             } else {
-                vec![
-                    Cell::from("").style(status_style),
-                    Cell::from(status_text).style(status_style),
-                    Cell::from(Line::from("Cache").right_aligned()).style(
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(Line::from("Duration").right_aligned()).style(
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]
+                // For the non-collapsed view, we want to highlight the parallel info
+                // Only if there are tasks in progress
+                if running > 0 {
+                    let main_text =
+                        format!("Executing {}/{} remaining tasks... ", running, remaining);
+
+                    let styled_text = Line::from(vec![
+                        Span::styled(
+                            main_text,
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("(max parallel: {})", self.max_parallel),
+                            Style::default().fg(Color::Cyan),
+                        ),
+                    ]);
+
+                    vec![
+                        Cell::from("").style(status_style),
+                        Cell::from(styled_text),
+                        Cell::from(Line::from("Cache").right_aligned()).style(
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Cell::from(Line::from("Duration").right_aligned()).style(
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]
+                } else {
+                    // No running tasks, don't show max parallel info
+                    vec![
+                        Cell::from("").style(status_style),
+                        Cell::from(status_text.clone()).style(
+                            if running == 0 && remaining == 0 && !status_text.is_empty() {
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
+                            } else if remaining > 0 {
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                status_style
+                            },
+                        ),
+                        Cell::from(Line::from("Cache").right_aligned()).style(
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Cell::from(Line::from("Duration").right_aligned()).style(
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]
+                }
             }
         }
     }
@@ -1027,7 +1132,6 @@ impl Component for TasksList {
                 Span::raw(" "),
                 Span::styled(" NX ", title_style.bold().bg(Color::Cyan).fg(Color::Black)),
                 Span::raw("   "),
-                Span::styled(" run-many ", title_style.fg(Color::Cyan).bold()),
             ];
 
             let task_names = self.target_names.clone();
@@ -1268,34 +1372,89 @@ impl Component for TasksList {
             }
 
             // Add task rows
-            all_rows.extend(visible_entries.iter().map(|entry| {
+            all_rows.extend(visible_entries.iter().enumerate().map(|(row_idx, entry)| {
                 if let Some(task_name) = entry {
                     // Find the task in the filtered list
                     if let Some(task) = self.tasks.iter().find(|t| &t.name == task_name) {
                         let is_selected = self.selection_manager.is_selected(&task_name);
+
+                        // Use the helper method to check if we should show the parallel section
+                        let show_parallel = self.should_show_parallel_section();
+
+                        // Only consider rows for the parallel section if appropriate
+                        let is_in_parallel_section = show_parallel && row_idx < self.max_parallel;
+
                         let status_cell = match task.status {
                             TaskStatus::Success => Cell::from(Line::from(vec![
+                                // Keep selection indicator always visible
                                 Span::raw(if is_selected { " > " } else { "   " }),
+                                // Add vertical line for parallel section after selection indicator
+                                if is_in_parallel_section {
+                                    let line_color = Color::DarkGray;
+                                    Span::styled("│", Style::default().fg(line_color))
+                                } else {
+                                    Span::raw("")
+                                },
                                 Span::styled(" ✔", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::Failure => Cell::from(Line::from(vec![
+                                // Keep selection indicator always visible
                                 Span::raw(if is_selected { " > " } else { "   " }),
+                                // Add vertical line for parallel section after selection indicator
+                                if is_in_parallel_section {
+                                    let line_color = Color::DarkGray;
+                                    Span::styled("│", Style::default().fg(line_color))
+                                } else {
+                                    Span::raw("")
+                                },
                                 Span::styled(" ✖", Style::default().fg(Color::Red)),
                             ])),
                             TaskStatus::Skipped => Cell::from(Line::from(vec![
+                                // Keep selection indicator always visible
                                 Span::raw(if is_selected { " > " } else { "   " }),
+                                // Add vertical line for parallel section after selection indicator
+                                if is_in_parallel_section {
+                                    let line_color = Color::DarkGray;
+                                    Span::styled("│", Style::default().fg(line_color))
+                                } else {
+                                    Span::raw("")
+                                },
                                 Span::styled(" ⏭", Style::default().fg(Color::Yellow)),
                             ])),
                             TaskStatus::LocalCacheKeptExisting => Cell::from(Line::from(vec![
+                                // Keep selection indicator always visible
                                 Span::raw(if is_selected { " > " } else { "   " }),
+                                // Add vertical line for parallel section after selection indicator
+                                if is_in_parallel_section {
+                                    let line_color = Color::DarkGray;
+                                    Span::styled("│", Style::default().fg(line_color))
+                                } else {
+                                    Span::raw("")
+                                },
                                 Span::styled(" ⚡", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::LocalCache => Cell::from(Line::from(vec![
+                                // Keep selection indicator always visible
                                 Span::raw(if is_selected { " > " } else { "   " }),
+                                // Add vertical line for parallel section after selection indicator
+                                if is_in_parallel_section {
+                                    let line_color = Color::DarkGray;
+                                    Span::styled("│", Style::default().fg(line_color))
+                                } else {
+                                    Span::raw("")
+                                },
                                 Span::styled(" ⚡", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::RemoteCache => Cell::from(Line::from(vec![
+                                // Keep selection indicator always visible
                                 Span::raw(if is_selected { " > " } else { "   " }),
+                                // Add vertical line for parallel section after selection indicator
+                                if is_in_parallel_section {
+                                    let line_color = Color::DarkGray;
+                                    Span::styled("│", Style::default().fg(line_color))
+                                } else {
+                                    Span::raw("")
+                                },
                                 Span::styled(" ⚡▼", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::InProgress => {
@@ -1304,7 +1463,15 @@ impl Component for TasksList {
                                 let throbber_char =
                                     throbber_chars[self.throbber_counter % throbber_chars.len()];
                                 Cell::from(Line::from(vec![
-                                    Span::raw(if is_selected { " > " } else { "   " }),
+                                    // Keep selection indicator always visible
+                                    Span::raw(if is_selected { " >" } else { "  " }),
+                                    // Add vertical line for parallel section after selection indicator
+                                    if is_in_parallel_section {
+                                        let line_color = Color::Cyan; // Use cyan for in-progress tasks
+                                        Span::styled("│", Style::default().fg(line_color))
+                                    } else {
+                                        Span::raw(" ")
+                                    },
                                     Span::raw(" "),
                                     Span::styled(
                                         throbber_char.to_string(),
@@ -1313,7 +1480,15 @@ impl Component for TasksList {
                                 ]))
                             }
                             TaskStatus::NotStarted => Cell::from(Line::from(vec![
+                                // Keep selection indicator always visible
                                 Span::raw(if is_selected { " > " } else { "   " }),
+                                // Add vertical line for parallel section after selection indicator
+                                if is_in_parallel_section {
+                                    let line_color = Color::DarkGray;
+                                    Span::styled("│", Style::default().fg(line_color))
+                                } else {
+                                    Span::raw("")
+                                },
                                 Span::styled(" ·", Style::default().fg(Color::DarkGray)),
                             ])),
                         };
@@ -1338,25 +1513,10 @@ impl Component for TasksList {
                             };
 
                             if !output_indicators.is_empty() {
-                                // Get status color based on task status
-                                let status_color = match task.status {
-                                    TaskStatus::Success
-                                    | TaskStatus::LocalCacheKeptExisting
-                                    | TaskStatus::LocalCache
-                                    | TaskStatus::RemoteCache => Color::Green,
-                                    TaskStatus::Failure => Color::Red,
-                                    TaskStatus::Skipped => Color::Yellow,
-                                    TaskStatus::InProgress => Color::LightCyan,
-                                    TaskStatus::NotStarted => Color::DarkGray,
-                                };
-
                                 let line = Line::from(vec![
                                     Span::raw(task_name),
                                     Span::raw(" "),
-                                    Span::styled(
-                                        output_indicators,
-                                        Style::default().dim().fg(status_color),
-                                    ),
+                                    Span::styled(output_indicators, Style::default().dim()),
                                 ]);
                                 Cell::from(line)
                             } else {
@@ -1402,17 +1562,63 @@ impl Component for TasksList {
                     }
                 } else {
                     // Handle separator rows
-                    let empty_cells = if collapsed_mode {
-                        vec![Cell::from(""), Cell::from("")]
+                    let row_idx_in_visible_entries = row_idx;
+
+                    // Use the helper method to check if we should show the parallel section
+                    let show_parallel = self.should_show_parallel_section();
+
+                    // Only consider it as part of the parallel section if appropriate
+                    let is_in_parallel_section =
+                        show_parallel && row_idx_in_visible_entries < self.max_parallel;
+
+                    // For in_progress section, show empty task slots with a visual indicator
+                    if is_in_parallel_section {
+                        let empty_cells = if collapsed_mode {
+                            vec![
+                                Cell::from(Line::from(vec![
+                                    // Keep space for selection indicator
+                                    Span::raw("  "),
+                                    // Add the vertical line after where selection indicator would be
+                                    Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+                                    Span::raw("  "),
+                                ])),
+                                Cell::from(Span::styled(
+                                    "Waiting for task...",
+                                    Style::default().fg(Color::DarkGray),
+                                )),
+                            ]
+                        } else {
+                            vec![
+                                Cell::from(Line::from(vec![
+                                    // Keep space for selection indicator
+                                    Span::raw("  "),
+                                    // Add the vertical line after where selection indicator would be
+                                    Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+                                    Span::raw("  "),
+                                ])),
+                                Cell::from(Span::styled(
+                                    "Waiting for task...",
+                                    Style::default().fg(Color::DarkGray),
+                                )),
+                                Cell::from(""),
+                                Cell::from(""),
+                            ]
+                        };
+                        Row::new(empty_cells).height(1).style(normal_style)
                     } else {
-                        vec![
-                            Cell::from(""),
-                            Cell::from(""),
-                            Cell::from(""),
-                            Cell::from(""),
-                        ]
-                    };
-                    Row::new(empty_cells).height(1)
+                        // Regular separator
+                        let empty_cells = if collapsed_mode {
+                            vec![Cell::from(""), Cell::from("")]
+                        } else {
+                            vec![
+                                Cell::from(""),
+                                Cell::from(""),
+                                Cell::from(""),
+                                Cell::from(""),
+                            ]
+                        };
+                        Row::new(empty_cells).height(1)
+                    }
                 }
             }));
 
@@ -1733,6 +1939,7 @@ impl Default for TasksList {
             target_names: Vec::new(),
             task_list_hidden: false,
             cloud_message: None,
+            max_parallel: MAX_PARALLEL,
         }
     }
 }
