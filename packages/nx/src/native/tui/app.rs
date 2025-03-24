@@ -59,8 +59,9 @@ impl App {
         target_names: Vec<String>,
         pinned_tasks: Vec<String>,
         tui_config: TuiConfig,
+        title_text: String,
     ) -> Result<Self> {
-        let tasks_list = TasksList::new(tasks, target_names, pinned_tasks);
+        let tasks_list = TasksList::new(tasks, target_names, pinned_tasks, title_text);
         let help_popup = HelpPopup::new();
         let countdown_popup = CountdownPopup::new();
         let focus = tasks_list.get_focus();

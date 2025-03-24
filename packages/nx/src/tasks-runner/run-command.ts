@@ -87,6 +87,10 @@ async function getTerminalOutputLifeCycle(
     const isRunOne = initiatingProject != null;
 
     const pinnedTasks: string[] = [];
+    const taskText = tasks.length === 1 ? 'task' : 'tasks';
+    const projectText = projectNames.length === 1 ? 'project' : 'projects';
+    let titleText = '';
+
     if (isRunOne) {
       const mainTaskId = createTaskId(
         initiatingProject,
@@ -99,13 +103,27 @@ async function getTerminalOutputLifeCycle(
       if (mainContinuousDependencies.length > 0) {
         pinnedTasks.push(mainContinuousDependencies[0]);
       }
+      const [project, target] = mainTaskId.split(':');
+      titleText = `${target} ${project}`;
+      if (tasks.length > 1) {
+        titleText += ` (and ${tasks.length - 1} requisite ${taskText})`;
+      }
+    } else {
+      titleText =
+        nxArgs.targets.join(' ') + ` for ${projectNames.length} ${projectText}`;
+      if (tasks.length > projectNames.length) {
+        titleText += ` (and ${
+          tasks.length - projectNames.length
+        } requisite ${taskText})`;
+      }
     }
 
     const lifeCycle = new AppLifeCycle(
       tasks,
       pinnedTasks,
       nxArgs ?? {},
-      nxJson.tui ?? {}
+      nxJson.tui ?? {},
+      titleText
     );
 
     const { lifeCycle: tsLifeCycle, printSummary } =

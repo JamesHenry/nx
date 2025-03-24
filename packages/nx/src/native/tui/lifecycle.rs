@@ -166,6 +166,7 @@ impl AppLifeCycle {
         pinned_tasks: Vec<String>,
         tui_cli_args: TuiCliArgs,
         tui_config: TuiConfig,
+        title_text: String,
     ) -> Self {
         // Get the target names from nx_args.targets
         let rust_tui_cli_args = tui_cli_args.into();
@@ -180,6 +181,7 @@ impl AppLifeCycle {
                     rust_tui_cli_args.targets,
                     pinned_tasks,
                     rust_tui_config,
+                    title_text,
                 )
                 .unwrap(),
             )),

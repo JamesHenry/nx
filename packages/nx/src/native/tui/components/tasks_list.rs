@@ -172,12 +172,18 @@ pub struct TasksList {
     task_list_hidden: bool,
     cloud_message: Option<String>,
     max_parallel: usize, // Maximum number of parallel tasks
+    title_text: String,
 }
 
 impl TasksList {
     /// Creates a new TasksList with the given tasks.
     /// Converts the input tasks into TaskItems and initializes the UI state.
-    pub fn new(tasks: Vec<Task>, target_names: Vec<String>, pinned_tasks: Vec<String>) -> Self {
+    pub fn new(
+        tasks: Vec<Task>,
+        target_names: Vec<String>,
+        pinned_tasks: Vec<String>,
+        title_text: String,
+    ) -> Self {
         let mut task_items = Vec::new();
 
         for task in tasks {
@@ -220,6 +226,7 @@ impl TasksList {
             task_list_hidden: false,
             cloud_message: None,
             max_parallel: MAX_PARALLEL,
+            title_text,
         }
     }
 
@@ -939,14 +946,31 @@ impl TasksList {
                 Cell::from("   ").style(status_style) // 3 spaces to maintain alignment
             };
 
+            // Determine completion status color for completed tasks
+            let completion_color = if !self.tasks.is_empty() && running == 0 && remaining == 0 {
+                // Check if any tasks failed
+                let has_failures = self
+                    .tasks
+                    .iter()
+                    .any(|t| matches!(t.status, TaskStatus::Failure));
+                if has_failures {
+                    Color::Red
+                } else {
+                    Color::Green
+                }
+            } else {
+                Color::Cyan
+            };
+
             // Determine the style for the status text
             let text_style = if running > 0 {
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else if running == 0 && remaining == 0 && !status_text.is_empty() {
+                // Use completion color for completed tasks status
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(completion_color)
                     .add_modifier(Modifier::BOLD)
             } else if remaining > 0 {
                 Style::default()
@@ -1175,49 +1199,74 @@ impl Component for TasksList {
                 Style::default()
             };
 
+            // Determine the color of the NX logo based on task status
+            let logo_color = if self.tasks.is_empty() {
+                // No tasks
+                Color::Cyan
+            } else {
+                let all_tasks_completed = self.tasks.iter().all(|t| {
+                    matches!(
+                        t.status,
+                        TaskStatus::Success
+                            | TaskStatus::Failure
+                            | TaskStatus::Skipped
+                            | TaskStatus::LocalCache
+                            | TaskStatus::LocalCacheKeptExisting
+                            | TaskStatus::RemoteCache
+                    )
+                });
+
+                if all_tasks_completed {
+                    // All tasks are completed, check if any failed
+                    let has_failures = self
+                        .tasks
+                        .iter()
+                        .any(|t| matches!(t.status, TaskStatus::Failure));
+                    if has_failures {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    }
+                } else {
+                    // Tasks are still running
+                    Color::Cyan
+                }
+            };
+
             let mut title_text = vec![
                 Span::raw(" "),
-                Span::styled(" NX ", title_style.bold().bg(Color::Cyan).fg(Color::Black)),
+                Span::styled(" NX ", title_style.bold().bg(logo_color).fg(Color::Black)),
                 Span::raw("   "),
             ];
 
-            let task_names = self.target_names.clone();
-
-            // Calculate the width of the fixed elements (everything except task names)
+            // Calculate the width of the fixed elements (everything except title text)
             let fixed_width: usize = title_text.iter().map(|s| s.width()).sum();
             let available_width = title_chunks[1].width as usize;
 
             // If we're in collapsed mode (output panes showing), we may need to truncate
-            if collapsed_mode && !task_names.is_empty() {
-                // Calculate how much space we have for task names
-                let space_for_names = available_width.saturating_sub(fixed_width + 3); // +3 for ellipsis
-                let mut current_width = 0;
-                let mut included_names = Vec::new();
+            if collapsed_mode && !self.title_text.is_empty() {
+                // Calculate how much space we have for title text
+                let space_for_title = available_width.saturating_sub(fixed_width + 3); // +3 for ellipsis
 
-                // Add names until we run out of space
-                for name in task_names.iter() {
-                    let name_width = name.len() + 1; // +1 for the space
-                    if current_width + name_width > space_for_names {
-                        // No more space, add ellipsis and break
-                        included_names.push(Span::styled("...", title_style.fg(Color::DarkGray)));
-                        break;
-                    }
-                    included_names.push(Span::styled(
-                        format!(" {}", name),
+                // If title is too long, truncate with ellipsis
+                if self.title_text.len() > space_for_title {
+                    title_text.push(Span::styled(
+                        format!(" {}", &self.title_text[..space_for_title.saturating_sub(1)]),
                         title_style.fg(Color::Gray),
                     ));
-                    current_width += name_width;
+                    title_text.push(Span::styled("...", title_style.fg(Color::DarkGray)));
+                } else {
+                    title_text.push(Span::styled(
+                        format!(" {}", self.title_text),
+                        title_style.fg(Color::Gray),
+                    ));
                 }
-
-                title_text.extend(included_names);
             } else {
                 // Original behavior for non-collapsed mode
-                let middle_spans: Vec<Span> = task_names
-                    .iter()
-                    .map(|s| Span::styled(format!(" {}", s), title_style.fg(Color::Gray)))
-                    .collect();
-
-                title_text.extend(middle_spans);
+                title_text.push(Span::styled(
+                    format!(" {}", self.title_text),
+                    title_style.fg(Color::Gray),
+                ));
             }
 
             // Add padding to fill remaining space
@@ -2131,6 +2180,7 @@ impl Default for TasksList {
             task_list_hidden: false,
             cloud_message: None,
             max_parallel: MAX_PARALLEL,
+            title_text: String::new(),
         }
     }
 }
