@@ -6,6 +6,20 @@ pub struct TaskSelectionManager {
     // Current page and pagination settings
     current_page: usize,
     items_per_page: usize,
+    // Selection mode determines how the selection behaves when entries change
+    selection_mode: SelectionMode,
+}
+
+/// Controls how task selection behaves when entries are updated or reordered
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum SelectionMode {
+    /// Track a specific task by name regardless of its position in the list
+    /// Used when a task is pinned or in spacebar mode
+    TrackByName,
+
+    /// Track selection by position/index in the list
+    /// Used when no tasks are pinned and not in spacebar mode
+    TrackByPosition,
 }
 
 impl TaskSelectionManager {
@@ -15,10 +29,29 @@ impl TaskSelectionManager {
             selected_task_name: None,
             current_page: 0,
             items_per_page,
+            selection_mode: SelectionMode::TrackByName, // Default to name tracking for backward compatibility
         }
     }
 
+    /// Sets the selection mode
+    pub fn set_selection_mode(&mut self, mode: SelectionMode) {
+        self.selection_mode = mode;
+    }
+
+    /// Gets the current selection mode
+    pub fn get_selection_mode(&self) -> SelectionMode {
+        self.selection_mode
+    }
+
     pub fn update_entries(&mut self, entries: Vec<Option<String>>) {
+        match self.selection_mode {
+            SelectionMode::TrackByName => self.update_entries_track_by_name(entries),
+            SelectionMode::TrackByPosition => self.update_entries_track_by_position(entries),
+        }
+    }
+
+    /// Updates entries while trying to preserve the selected task by name
+    fn update_entries_track_by_name(&mut self, entries: Vec<Option<String>>) {
         // Keep track of currently selected task name
         let selected = self.selected_task_name.clone();
 
@@ -30,11 +63,21 @@ impl TaskSelectionManager {
 
         // If we had a selection, try to find it in the new list
         if let Some(task_name) = selected {
-            if !self
+            // First check if the task still exists in the entries
+            let task_still_exists = self
                 .entries
                 .iter()
-                .any(|entry| entry.as_ref() == Some(&task_name))
-            {
+                .any(|entry| entry.as_ref() == Some(&task_name));
+
+            if task_still_exists {
+                // Task is still in the list, keep it selected with the same name
+                self.selected_task_name = Some(task_name);
+
+                // Update the current page to ensure the selected task is visible
+                if let Some(idx) = self.get_selected_index() {
+                    self.current_page = idx / self.items_per_page;
+                }
+            } else {
                 // If task is no longer in the list, select first available task
                 self.select_first_available();
             }
@@ -45,6 +88,51 @@ impl TaskSelectionManager {
 
         // Validate selection for current page
         self.validate_selection_for_current_page();
+    }
+
+    /// Updates entries while trying to preserve the selected position in the list
+    fn update_entries_track_by_position(&mut self, entries: Vec<Option<String>>) {
+        // Get the current selection position within the page
+        let page_index = self.get_selected_index_in_current_page();
+
+        // Update the entries
+        self.entries = entries;
+
+        // Ensure current page is valid
+        self.validate_current_page();
+
+        // If we had a selection and there are entries, try to maintain the position
+        if let Some(idx) = page_index {
+            let start = self.current_page * self.items_per_page;
+            let end = (start + self.items_per_page).min(self.entries.len());
+
+            if start < end {
+                // Convert page index to absolute index
+                let absolute_idx = start + idx;
+
+                // Find the next non-empty entry at or after the position
+                for i in absolute_idx..end {
+                    if let Some(Some(name)) = self.entries.get(i) {
+                        self.selected_task_name = Some(name.clone());
+                        return;
+                    }
+                }
+
+                // If we can't find one after, try before
+                for i in (start..absolute_idx).rev() {
+                    if let Some(Some(name)) = self.entries.get(i) {
+                        self.selected_task_name = Some(name.clone());
+                        return;
+                    }
+                }
+            }
+
+            // If we couldn't find anything on the current page, select first available
+            self.select_first_available();
+        } else {
+            // No previous selection, select first available task
+            self.select_first_available();
+        }
     }
 
     pub fn select(&mut self, task_name: Option<String>) {
@@ -162,9 +250,10 @@ impl TaskSelectionManager {
             let end = (start + self.items_per_page).min(self.entries.len());
 
             // Check if selected task is on current page
-            if start < end && !self.entries[start..end]
-                .iter()
-                .any(|e| e.as_ref() == Some(task_name))
+            if start < end
+                && !self.entries[start..end]
+                    .iter()
+                    .any(|e| e.as_ref() == Some(task_name))
             {
                 // If not, select first available task on current page
                 self.selected_task_name = self.entries[start..end].iter().find_map(|e| e.clone());
@@ -185,7 +274,9 @@ impl TaskSelectionManager {
     pub fn get_selected_index_in_current_page(&self) -> Option<usize> {
         if let Some(task_name) = &self.selected_task_name {
             let current_page_entries = self.get_current_page_entries();
-            current_page_entries.iter().position(|entry| entry.as_ref() == Some(task_name))
+            current_page_entries
+                .iter()
+                .position(|entry| entry.as_ref() == Some(task_name))
         } else {
             None
         }
@@ -218,18 +309,55 @@ mod tests {
         let manager = TaskSelectionManager::new(5);
         assert_eq!(manager.get_selected_task_name(), None);
         assert_eq!(manager.get_current_page(), 0);
+        assert_eq!(manager.get_selection_mode(), SelectionMode::TrackByName);
     }
 
     #[test]
-    fn test_update_entries() {
+    fn test_update_entries_track_by_name() {
         let mut manager = TaskSelectionManager::new(2);
+        manager.set_selection_mode(SelectionMode::TrackByName);
+
+        // Initial entries
         let entries = vec![Some("Task 1".to_string()), None, Some("Task 2".to_string())];
         manager.update_entries(entries);
         assert_eq!(
             manager.get_selected_task_name(),
             Some(&"Task 1".to_string())
         );
-        assert_eq!(manager.total_pages(), 2);
+
+        // Update entries with same tasks but different order
+        let entries = vec![Some("Task 2".to_string()), None, Some("Task 1".to_string())];
+        manager.update_entries(entries);
+
+        // Selection should still be Task 1 despite order change
+        assert_eq!(
+            manager.get_selected_task_name(),
+            Some(&"Task 1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_update_entries_track_by_position() {
+        let mut manager = TaskSelectionManager::new(2);
+        manager.set_selection_mode(SelectionMode::TrackByPosition);
+
+        // Initial entries
+        let entries = vec![Some("Task 1".to_string()), None, Some("Task 2".to_string())];
+        manager.update_entries(entries);
+        assert_eq!(
+            manager.get_selected_task_name(),
+            Some(&"Task 1".to_string())
+        );
+
+        // Update entries with different tasks but same structure
+        let entries = vec![Some("Task 3".to_string()), None, Some("Task 4".to_string())];
+        manager.update_entries(entries);
+
+        // Selection should be Task 3 (same position as Task 1 was)
+        assert_eq!(
+            manager.get_selected_task_name(),
+            Some(&"Task 3".to_string())
+        );
     }
 
     #[test]
@@ -311,5 +439,26 @@ mod tests {
 
         assert!(manager.is_selected("Task 1"));
         assert!(!manager.is_selected("Task 2"));
+    }
+
+    #[test]
+    fn test_handle_position_tracking_empty_entries() {
+        let mut manager = TaskSelectionManager::new(2);
+        manager.set_selection_mode(SelectionMode::TrackByPosition);
+
+        // Initial entries
+        let entries = vec![Some("Task 1".to_string()), Some("Task 2".to_string())];
+        manager.update_entries(entries);
+        assert_eq!(
+            manager.get_selected_task_name(),
+            Some(&"Task 1".to_string())
+        );
+
+        // Update with empty entries
+        let entries: Vec<Option<String>> = vec![];
+        manager.update_entries(entries);
+
+        // No entries, so no selection
+        assert_eq!(manager.get_selected_task_name(), None);
     }
 }

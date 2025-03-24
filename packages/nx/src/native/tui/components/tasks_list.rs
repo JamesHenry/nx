@@ -29,7 +29,7 @@ use crate::native::{
 };
 
 use super::pagination::Pagination;
-use super::task_selection_manager::TaskSelectionManager;
+use super::task_selection_manager::{SelectionMode, TaskSelectionManager};
 use super::terminal_pane::{TerminalPane, TerminalPaneData};
 use super::{help_text::HelpText, terminal_pane::TerminalPaneState};
 
@@ -38,6 +38,7 @@ const CACHE_STATUS_LOCAL: &str = "Local";
 const CACHE_STATUS_REMOTE: &str = "Remote";
 const CACHE_STATUS_NOT_YET_KNOWN: &str = "...";
 const CACHE_STATUS_NOT_APPLICABLE: &str = "-";
+const DURATION_NOT_YET_KNOWN: &str = "...";
 const MAX_PARALLEL: usize = 3; // Max parallel tasks to display in the UI
 
 /// Represents an individual task with its current state and execution details.
@@ -77,7 +78,7 @@ impl TaskItem {
             duration: if continuous {
                 "Continuous".to_string()
             } else {
-                "".to_string()
+                "...".to_string()
             },
             cache_status: if continuous {
                 // We know upfront that the cache status will not be applicable
@@ -426,6 +427,16 @@ impl TasksList {
     /// Updates filtered tasks and selection manager entries.
     /// NEEDS ANALYSIS: Consider splitting the filter logic from the UI update logic.
     pub fn apply_filter(&mut self) {
+        // Set the appropriate selection mode based on our current state
+        let should_track_by_name = self.spacebar_mode || self.has_visible_panes();
+        let mode = if should_track_by_name {
+            SelectionMode::TrackByName
+        } else {
+            SelectionMode::TrackByPosition
+        };
+        self.selection_manager.set_selection_mode(mode);
+
+        // Apply filter
         if self.filter_text.is_empty() {
             self.filtered_names = self.tasks.iter().map(|t| t.name.clone()).collect();
         } else {
@@ -474,11 +485,17 @@ impl TasksList {
                 // Always clear all panes when toggling with spacebar
                 self.clear_all_panes();
                 self.spacebar_mode = false;
+                // Update selection mode to position-based
+                self.selection_manager
+                    .set_selection_mode(SelectionMode::TrackByPosition);
             } else {
                 // Show current task in pane 1 in spacebar mode
                 self.pane_tasks = [Some(task_name.clone()), None];
                 self.focused_pane = None;
                 self.spacebar_mode = true; // Enter spacebar mode
+                                           // Update selection mode to name-based when entering spacebar mode
+                self.selection_manager
+                    .set_selection_mode(SelectionMode::TrackByName);
 
                 // Re-evaluate the optimal size of the terminal pane and pty
                 let _ = self.handle_resize(None);
@@ -497,6 +514,9 @@ impl TasksList {
         self.focused_pane = None;
         self.focus = Focus::TaskList;
         self.spacebar_mode = false;
+        // When all panes are cleared, use position-based selection
+        self.selection_manager
+            .set_selection_mode(SelectionMode::TrackByPosition);
     }
 
     pub fn assign_current_task_to_pane(&mut self, pane_idx: usize) {
@@ -505,6 +525,9 @@ impl TasksList {
             if self.spacebar_mode && pane_idx == 0 {
                 self.spacebar_mode = false;
                 self.focused_pane = Some(0);
+                // When converting from spacebar to pinned, stay in name-tracking mode
+                self.selection_manager
+                    .set_selection_mode(SelectionMode::TrackByName);
             } else {
                 // Check if the task is already pinned to the pane
                 if self.pane_tasks[pane_idx].as_deref() == Some(task_name.as_str()) {
@@ -516,6 +539,9 @@ impl TasksList {
                         self.focused_pane = None;
                         self.focus = Focus::TaskList;
                         self.spacebar_mode = false;
+                        // When all panes are cleared, use position-based selection
+                        self.selection_manager
+                            .set_selection_mode(SelectionMode::TrackByPosition);
                     }
                 } else {
                     // Pin the task to the specified pane
@@ -523,6 +549,9 @@ impl TasksList {
                     self.focused_pane = Some(pane_idx);
                     self.focus = Focus::TaskList;
                     self.spacebar_mode = false; // Exit spacebar mode when pinning
+                                                // When pinning a task, use name-based selection
+                    self.selection_manager
+                        .set_selection_mode(SelectionMode::TrackByName);
                 }
             }
 
@@ -741,13 +770,38 @@ impl TasksList {
     }
 
     fn sort_tasks(&mut self) {
+        // Set the appropriate selection mode based on our current state
+        let should_track_by_name = self.spacebar_mode || self.has_visible_panes();
+        let mode = if should_track_by_name {
+            SelectionMode::TrackByName
+        } else {
+            SelectionMode::TrackByPosition
+        };
+        self.selection_manager.set_selection_mode(mode);
+
+        // Sort the tasks
         sort_task_items(&mut self.tasks);
 
         // Update filtered indices to match new order
         self.filtered_names = self.tasks.iter().map(|t| t.name.clone()).collect();
+
         if !self.filter_text.is_empty() {
-            self.apply_filter();
+            // Apply filter but don't sort again
+            self.filtered_names = self
+                .tasks
+                .iter()
+                .filter(|item| {
+                    item.name
+                        .to_lowercase()
+                        .contains(&self.filter_text.to_lowercase())
+                })
+                .map(|t| t.name.clone())
+                .collect();
         }
+
+        // Update the entries in the selection manager
+        let entries = self.create_entries_with_separator(&self.filtered_names);
+        self.selection_manager.update_entries(entries);
     }
 
     /// Returns the count of running and remaining tasks.
@@ -864,14 +918,22 @@ impl TasksList {
 
             // Create the status cell (first column)
             let status_cell = if running > 0 && !self.is_loading_state() {
-                // Include the vertical line with top corner in the status cell
-                Cell::from(Line::from(vec![
-                    // Match the width of the selection indicator + vertical line in task rows
-                    Span::raw(" "), // Space for selection indicator
-                    Span::styled(" ┌", Style::default().fg(Color::Cyan)), // Top corner of the box
-                    Span::raw(""),  // No extra space after the line to match task rows
-                ]))
-                .style(status_style)
+                // Only show the top corner of the box when on the first page
+                let is_first_page = self.selection_manager.get_current_page() == 0;
+
+                if is_first_page {
+                    // Include the vertical line with top corner in the status cell
+                    Cell::from(Line::from(vec![
+                        // Match the width of the selection indicator + vertical line in task rows
+                        Span::raw(" "), // Space for selection indicator
+                        Span::styled(" ┌", Style::default().fg(Color::Cyan)), // Top corner of the box
+                        Span::raw(""), // No extra space after the line to match task rows
+                    ]))
+                    .style(status_style)
+                } else {
+                    // No vertical line when not on the first page
+                    Cell::from("   ").style(status_style) // 3 spaces to maintain alignment
+                }
             } else {
                 // No vertical line needed when no tasks are running or we're just loading
                 Cell::from("   ").style(status_style) // 3 spaces to maintain alignment
@@ -1293,13 +1355,19 @@ impl Component for TasksList {
             // Add an empty row right after the header to create visual spacing
             // while maintaining the seamless vertical line if we're showing the parallel section
             if self.should_show_parallel_section() {
+                let is_first_page = self.selection_manager.get_current_page() == 0;
+
                 let empty_cells = if collapsed_mode {
                     vec![
                         Cell::from(Line::from(vec![
                             // Space for selection indicator
                             Span::raw(" "),
-                            // Add vertical line for visual continuity
-                            Span::styled(" │", Style::default().fg(Color::Cyan)),
+                            // Add vertical line for visual continuity, only on first page
+                            if is_first_page {
+                                Span::styled(" │", Style::default().fg(Color::Cyan))
+                            } else {
+                                Span::raw("  ")
+                            },
                             Span::raw("   "),
                         ])),
                         Cell::from(""),
@@ -1309,8 +1377,12 @@ impl Component for TasksList {
                         Cell::from(Line::from(vec![
                             // Space for selection indicator
                             Span::raw(" "),
-                            // Add vertical line for visual continuity
-                            Span::styled(" │", Style::default().fg(Color::Cyan)),
+                            // Add vertical line for visual continuity, only on first page
+                            if is_first_page {
+                                Span::styled(" │", Style::default().fg(Color::Cyan))
+                            } else {
+                                Span::raw("  ")
+                            },
                             Span::raw("   "),
                         ])),
                         Cell::from(""),
@@ -1422,7 +1494,9 @@ impl Component for TasksList {
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
                                 // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section {
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
                                     Span::styled(" │", Style::default().fg(Color::Cyan))
                                 } else {
                                     Span::raw("  ")
@@ -1433,7 +1507,9 @@ impl Component for TasksList {
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
                                 // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section {
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
                                     Span::styled(" │", Style::default().fg(Color::Cyan))
                                 } else {
                                     Span::raw("  ")
@@ -1444,7 +1520,9 @@ impl Component for TasksList {
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
                                 // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section {
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
                                     Span::styled(" │", Style::default().fg(Color::Cyan))
                                 } else {
                                     Span::raw("  ")
@@ -1455,7 +1533,9 @@ impl Component for TasksList {
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
                                 // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section {
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
                                     Span::styled(" │", Style::default().fg(Color::Cyan))
                                 } else {
                                     Span::raw("  ")
@@ -1466,7 +1546,9 @@ impl Component for TasksList {
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
                                 // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section {
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
                                     Span::styled(" │", Style::default().fg(Color::Cyan))
                                 } else {
                                     Span::raw("  ")
@@ -1477,7 +1559,9 @@ impl Component for TasksList {
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
                                 // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section {
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
                                     Span::styled(" │", Style::default().fg(Color::Cyan))
                                 } else {
                                     Span::raw("  ")
@@ -1493,7 +1577,9 @@ impl Component for TasksList {
                                     // Selection indicator (fixed width of 2)
                                     Span::raw(if is_selected { ">" } else { " " }),
                                     // Add space and vertical line for parallel section (fixed position)
-                                    if is_in_parallel_section {
+                                    if is_in_parallel_section
+                                        && self.selection_manager.get_current_page() == 0
+                                    {
                                         Span::styled(" │", Style::default().fg(Color::Cyan))
                                     } else {
                                         Span::raw("  ")
@@ -1509,7 +1595,9 @@ impl Component for TasksList {
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
                                 // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section {
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
                                     Span::styled(" │", Style::default().fg(Color::Cyan))
                                 } else {
                                     Span::raw("  ")
@@ -1552,28 +1640,60 @@ impl Component for TasksList {
                         let mut row_cells = vec![status_cell, name];
 
                         if !collapsed_mode {
-                            row_cells.push(Cell::from(
+                            // Cache status cell
+                            let cache_cell = Cell::from(
                                 Line::from(match task.cache_status.as_str() {
                                     CACHE_STATUS_NOT_YET_KNOWN | CACHE_STATUS_NOT_APPLICABLE => {
                                         vec![Span::styled(
                                             task.cache_status.clone(),
-                                            Style::default().dim(),
+                                            if is_selected {
+                                                Style::default().add_modifier(Modifier::BOLD)
+                                            } else {
+                                                Style::default().dim()
+                                            },
                                         )]
                                     }
-                                    _ => vec![Span::raw(task.cache_status.clone())],
-                                })
-                                .right_aligned(),
-                            ));
-                            row_cells.push(Cell::from(
-                                Line::from(match task.duration.as_str() {
-                                    "" | "Continuous" => vec![Span::styled(
-                                        task.duration.clone(),
-                                        Style::default().dim(),
+                                    _ => vec![Span::styled(
+                                        task.cache_status.clone(),
+                                        if is_selected {
+                                            Style::default().add_modifier(Modifier::BOLD)
+                                        } else {
+                                            Style::default()
+                                        },
                                     )],
-                                    _ => vec![Span::raw(task.duration.clone())],
                                 })
                                 .right_aligned(),
-                            ));
+                            );
+
+                            // Duration cell
+                            let duration_cell = Cell::from(
+                                Line::from(match task.duration.as_str() {
+                                    "" | "Continuous" | DURATION_NOT_YET_KNOWN => {
+                                        vec![Span::styled(
+                                            task.duration.clone(),
+                                            if is_selected {
+                                                Style::default().add_modifier(Modifier::BOLD)
+                                            } else {
+                                                Style::default().dim()
+                                            },
+                                        )]
+                                    }
+                                    _ => vec![Span::styled(
+                                        task.duration.clone(),
+                                        if is_selected {
+                                            Style::default().add_modifier(Modifier::BOLD)
+                                        } else {
+                                            Style::default()
+                                        },
+                                    )],
+                                })
+                                .right_aligned(),
+                            );
+
+                            row_cells.push(cache_cell);
+                            row_cells.push(duration_cell);
+                        } else {
+                            // No cache/duration cells in collapsed mode
                         }
 
                         Row::new(row_cells).height(1).style(if is_selected {
@@ -1595,14 +1715,20 @@ impl Component for TasksList {
                     let is_bottom_cap = show_parallel && row_idx == self.max_parallel;
 
                     if is_in_parallel_section {
-                        // Add a vertical line for separators in the parallel section
+                        // Add a vertical line for separators in the parallel section, only on first page
+                        let is_first_page = self.selection_manager.get_current_page() == 0;
+
                         let empty_cells = if collapsed_mode {
                             vec![
                                 Cell::from(Line::from(vec![
                                     // Space for selection indicator (fixed width of 2)
                                     Span::raw(" "),
                                     // Add space and vertical line for parallel section (fixed position)
-                                    Span::styled(" │", Style::default().fg(Color::Cyan)),
+                                    if is_first_page {
+                                        Span::styled(" │", Style::default().fg(Color::Cyan))
+                                    } else {
+                                        Span::raw("  ")
+                                    },
                                     Span::styled(" ·  ", Style::default().dim()),
                                 ])),
                                 Cell::from(Span::styled(
@@ -1616,7 +1742,11 @@ impl Component for TasksList {
                                     // Space for selection indicator (fixed width of 2)
                                     Span::raw(" "),
                                     // Add space and vertical line for parallel section (fixed position)
-                                    Span::styled(" │", Style::default().fg(Color::Cyan)),
+                                    if is_first_page {
+                                        Span::styled(" │", Style::default().fg(Color::Cyan))
+                                    } else {
+                                        Span::raw("  ")
+                                    },
                                     Span::styled(" ·  ", Style::default().dim()),
                                 ])),
                                 Cell::from(Span::styled(
@@ -1629,14 +1759,20 @@ impl Component for TasksList {
                         };
                         Row::new(empty_cells).height(1).style(normal_style)
                     } else if is_bottom_cap {
-                        // Add the bottom corner cap at the end of the parallel section
+                        // Add the bottom corner cap at the end of the parallel section, only on first page
+                        let is_first_page = self.selection_manager.get_current_page() == 0;
+
                         let empty_cells = if collapsed_mode {
                             vec![
                                 Cell::from(Line::from(vec![
                                     // Space for selection indicator (fixed width of 2)
                                     Span::raw(" "),
-                                    // Add bottom corner for the box
-                                    Span::styled(" └", Style::default().fg(Color::Cyan)),
+                                    // Add bottom corner for the box, or just spaces if not on first page
+                                    if is_first_page {
+                                        Span::styled(" └", Style::default().fg(Color::Cyan))
+                                    } else {
+                                        Span::raw("  ")
+                                    },
                                     Span::raw("   "),
                                 ])),
                                 Cell::from(""),
@@ -1646,8 +1782,12 @@ impl Component for TasksList {
                                 Cell::from(Line::from(vec![
                                     // Space for selection indicator (fixed width of 2)
                                     Span::raw(" "),
-                                    // Add bottom corner for the box
-                                    Span::styled(" └", Style::default().fg(Color::Cyan)),
+                                    // Add bottom corner for the box, or just spaces if not on first page
+                                    if is_first_page {
+                                        Span::styled(" └", Style::default().fg(Color::Cyan))
+                                    } else {
+                                        Span::raw("  ")
+                                    },
                                     Span::raw("   "),
                                 ])),
                                 Cell::from(""),
