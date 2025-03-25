@@ -39,7 +39,9 @@ const CACHE_STATUS_REMOTE: &str = "Remote";
 const CACHE_STATUS_NOT_YET_KNOWN: &str = "...";
 const CACHE_STATUS_NOT_APPLICABLE: &str = "-";
 const DURATION_NOT_YET_KNOWN: &str = "...";
-const MAX_PARALLEL: usize = 3; // Max parallel tasks to display in the UI
+
+// TODO: Pass through the actual parallel value used for the run
+const MAX_PARALLEL: usize = 3;
 
 /// Represents an individual task with its current state and execution details.
 pub struct TaskItem {
@@ -1085,7 +1087,7 @@ impl Component for TasksList {
 
             let table_area = chunks[0];
             let filter_area = chunks[1];
-            let empty_line = chunks[2];    // Empty line between filter and pagination
+            let empty_line = chunks[2]; // Empty line between filter and pagination
             let pagination_area = chunks[3]; // Bottom bar area - now contains the cloud message rendering
 
             // Reserve space for pagination and borders
