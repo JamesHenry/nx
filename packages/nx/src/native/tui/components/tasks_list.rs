@@ -1542,79 +1542,43 @@ impl Component for TasksList {
                             TaskStatus::Success => Cell::from(Line::from(vec![
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section
-                                    && self.selection_manager.get_current_page() == 0
-                                {
-                                    Span::styled(" │", Style::default().fg(Color::Cyan))
-                                } else {
-                                    Span::raw("  ")
-                                },
+                                // Static spacing for non-parallel tasks
+                                Span::raw("  "),
                                 Span::styled(" ✔", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::Failure => Cell::from(Line::from(vec![
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section
-                                    && self.selection_manager.get_current_page() == 0
-                                {
-                                    Span::styled(" │", Style::default().fg(Color::Cyan))
-                                } else {
-                                    Span::raw("  ")
-                                },
+                                // Static spacing for non-parallel tasks
+                                Span::raw("  "),
                                 Span::styled(" ✖", Style::default().fg(Color::Red)),
                             ])),
                             TaskStatus::Skipped => Cell::from(Line::from(vec![
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section
-                                    && self.selection_manager.get_current_page() == 0
-                                {
-                                    Span::styled(" │", Style::default().fg(Color::Cyan))
-                                } else {
-                                    Span::raw("  ")
-                                },
+                                // Static spacing for non-parallel tasks
+                                Span::raw("  "),
                                 Span::styled(" ⏭", Style::default().fg(Color::Yellow)),
                             ])),
                             TaskStatus::LocalCacheKeptExisting => Cell::from(Line::from(vec![
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section
-                                    && self.selection_manager.get_current_page() == 0
-                                {
-                                    Span::styled(" │", Style::default().fg(Color::Cyan))
-                                } else {
-                                    Span::raw("  ")
-                                },
+                                // Static spacing for non-parallel tasks
+                                Span::raw("  "),
                                 Span::styled(" ⚡", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::LocalCache => Cell::from(Line::from(vec![
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section
-                                    && self.selection_manager.get_current_page() == 0
-                                {
-                                    Span::styled(" │", Style::default().fg(Color::Cyan))
-                                } else {
-                                    Span::raw("  ")
-                                },
+                                // Static spacing for non-parallel tasks
+                                Span::raw("  "),
                                 Span::styled(" ⚡", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::RemoteCache => Cell::from(Line::from(vec![
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section
-                                    && self.selection_manager.get_current_page() == 0
-                                {
-                                    Span::styled(" │", Style::default().fg(Color::Cyan))
-                                } else {
-                                    Span::raw("  ")
-                                },
+                                // Static spacing for non-parallel tasks
+                                Span::raw("  "),
                                 Span::styled(" ⚡▼", Style::default().fg(Color::Green)),
                             ])),
                             TaskStatus::InProgress => {
@@ -1643,14 +1607,8 @@ impl Component for TasksList {
                             TaskStatus::NotStarted => Cell::from(Line::from(vec![
                                 // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Add space and vertical line for parallel section (fixed position)
-                                if is_in_parallel_section
-                                    && self.selection_manager.get_current_page() == 0
-                                {
-                                    Span::styled(" │", Style::default().fg(Color::Cyan))
-                                } else {
-                                    Span::raw("  ")
-                                },
+                                // Static spacing for non-parallel tasks
+                                Span::raw("  "),
                                 Span::styled(" ·", Style::default().fg(Color::DarkGray)),
                             ])),
                         };
