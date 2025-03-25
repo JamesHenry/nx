@@ -1062,19 +1062,22 @@ impl Component for TasksList {
                 .constraints(if has_short_viewport {
                     vec![
                         Constraint::Fill(1),   // Table gets most space
-                        Constraint::Length(2), // Filter display (when active) - INCREASED TO 2 FOR BOTH LINES
+                        Constraint::Length(2), // Filter display (when active)
+                        Constraint::Length(1), // Empty line between filter and pagination
                         Constraint::Length(1), // Bottom bar (pagination)
                     ]
                 } else if task_list_area.width < 60 {
                     vec![
                         Constraint::Fill(1),   // Table gets most space
-                        Constraint::Length(2), // Filter display (when active) - INCREASED TO 2 FOR BOTH LINES
+                        Constraint::Length(2), // Filter display (when active)
+                        Constraint::Length(1), // Empty line between filter and pagination
                         Constraint::Length(2), // Bottom bar (2 units for stacked layout)
                     ]
                 } else {
                     vec![
                         Constraint::Fill(1),   // Table gets most space
-                        Constraint::Length(2), // Filter display (when active) - INCREASED TO 2 FOR BOTH LINES
+                        Constraint::Length(2), // Filter display (when active)
+                        Constraint::Length(1), // Empty line between filter and pagination
                         Constraint::Length(1), // Bottom bar
                     ]
                 })
@@ -1082,7 +1085,8 @@ impl Component for TasksList {
 
             let table_area = chunks[0];
             let filter_area = chunks[1];
-            let pagination_area = chunks[2]; // Bottom bar area - now contains the cloud message rendering
+            let empty_line = chunks[2];    // Empty line between filter and pagination
+            let pagination_area = chunks[3]; // Bottom bar area - now contains the cloud message rendering
 
             // Reserve space for pagination and borders
             self.recalculate_pages(table_area.height.saturating_sub(4));
@@ -1617,12 +1621,12 @@ impl Component for TasksList {
                 let instruction_text = if hidden_tasks > 0 {
                     if self.filter_persisted {
                         format!(
-                            "  {} tasks filtered out. Press / to edit, <esc> to clear",
+                            "  -> {} tasks filtered out. Press / to edit, <esc> to clear",
                             hidden_tasks
                         )
                     } else {
                         format!(
-                            "  {} tasks filtered out. Press / to persist, <esc> to clear",
+                            "  -> {} tasks filtered out. Press / to persist, <esc> to clear",
                             hidden_tasks
                         )
                     }
