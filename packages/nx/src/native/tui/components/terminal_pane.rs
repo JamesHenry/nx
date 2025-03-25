@@ -200,13 +200,13 @@ impl<'a> TerminalPane<'a> {
                     .add_modifier(Modifier::BOLD),
             ),
             TaskStatus::LocalCacheKeptExisting | TaskStatus::LocalCache => Span::styled(
-                "  ⚡ ",
+                "  ◼ ",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
             TaskStatus::RemoteCache => Span::styled(
-                "  ⚡▼  ",
+                "  ▼  ",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),

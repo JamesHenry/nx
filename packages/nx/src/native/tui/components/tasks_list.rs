@@ -849,14 +849,14 @@ impl TasksList {
 
             if collapsed_mode {
                 vec![
-                    // First column is for status icons - leave 3 chars of space to match task rows
-                    Cell::from("   ").style(status_style),
+                    // First column is for NX logo and title now
+                    Cell::from("").style(status_style),
                     Cell::from(filter_text).style(filter_style),
                 ]
             } else {
                 vec![
-                    // First column is for status icons - leave 3 chars of space to match task rows
-                    Cell::from("   ").style(status_style),
+                    // First column is for NX logo and title now
+                    Cell::from("").style(status_style),
                     Cell::from(filter_text).style(filter_style),
                     Cell::from(Line::from("Cache").right_aligned()).style(
                         Style::default()
@@ -871,121 +871,22 @@ impl TasksList {
                 ]
             }
         } else {
-            // Show normal status text
+            // Show running tasks status
             let (running, remaining) = self.get_task_counts();
 
-            // Completion status text
-            let status_text = if running == 0 && remaining == 0 {
-                // Get total completed tasks
-                let completed = self
-                    .tasks
-                    .iter()
-                    .filter(|t| {
-                        matches!(
-                            t.status,
-                            TaskStatus::Success
-                                | TaskStatus::Failure
-                                | TaskStatus::LocalCache
-                                | TaskStatus::LocalCacheKeptExisting
-                                | TaskStatus::RemoteCache
-                        )
-                    })
-                    .count();
+            // Leave first cell empty for the logo
+            let status_cell = Cell::from("").style(status_style);
 
-                // Don't show anything if completed is 0 (no tasks have run yet)
-                if completed == 0 {
-                    String::new()
-                }
-                // Calculate total duration if we have start/end times
-                else if let Some(first_start) =
-                    self.tasks.iter().filter_map(|t| t.start_time).min()
-                {
-                    if let Some(last_end) = self.tasks.iter().filter_map(|t| t.end_time).max() {
-                        format!(
-                            "Completed {} tasks in {}",
-                            completed,
-                            utils::format_duration_since(first_start, last_end)
-                        )
-                    } else {
-                        format!("Completed {} tasks", completed)
-                    }
-                } else {
-                    format!("Completed {} tasks", completed)
-                }
-            } else if collapsed_mode {
-                format!("{}/{} remaining...", running, remaining)
-            } else {
-                // Only show max parallel info if there are tasks in progress
-                if running > 0 {
-                    format!("Executing {}/{} remaining tasks...", running, remaining)
-                } else {
-                    format!("Executing {}/{} remaining tasks...", running, remaining)
-                }
-            };
-
-            // Create the status cell (first column)
-            let status_cell = if running > 0 && !self.is_loading_state() {
-                // Only show the top corner of the box when on the first page
-                let is_first_page = self.selection_manager.get_current_page() == 0;
-
-                if is_first_page {
-                    // Include the vertical line with top corner in the status cell
-                    Cell::from(Line::from(vec![
-                        // Match the width of the selection indicator + vertical line in task rows
-                        Span::raw(" "), // Space for selection indicator
-                        Span::styled(" ┌", Style::default().fg(Color::Cyan)), // Top corner of the box
-                        Span::raw(""), // No extra space after the line to match task rows
-                    ]))
-                    .style(status_style)
-                } else {
-                    // No vertical line when not on the first page
-                    Cell::from("   ").style(status_style) // 3 spaces to maintain alignment
-                }
-            } else {
-                // No vertical line needed when no tasks are running or we're just loading
-                Cell::from("   ").style(status_style) // 3 spaces to maintain alignment
-            };
-
-            // Determine completion status color for completed tasks
-            let completion_color = if !self.tasks.is_empty() && running == 0 && remaining == 0 {
-                // Check if any tasks failed
-                let has_failures = self
-                    .tasks
-                    .iter()
-                    .any(|t| matches!(t.status, TaskStatus::Failure));
-                if has_failures {
-                    Color::Red
-                } else {
-                    Color::Green
-                }
-            } else {
-                Color::Cyan
-            };
-
-            // Determine the style for the status text
-            let text_style = if running > 0 {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else if running == 0 && remaining == 0 && !status_text.is_empty() {
-                // Use completion color for completed tasks status
-                Style::default()
-                    .fg(completion_color)
-                    .add_modifier(Modifier::BOLD)
-            } else if remaining > 0 {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                status_style
-            };
+            // Completion status text is now shown with the logo in the first cell
+            // Just provide an empty second cell
+            let status_text = String::new();
 
             if collapsed_mode {
-                vec![status_cell, Cell::from(status_text).style(text_style)]
+                vec![status_cell, Cell::from(status_text)]
             } else {
                 vec![
                     status_cell,
-                    Cell::from(status_text).style(text_style),
+                    Cell::from(status_text),
                     Cell::from(Line::from("Cache").right_aligned()).style(
                         Style::default()
                             .fg(Color::Cyan)
@@ -1157,54 +1058,69 @@ impl Component for TasksList {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(if has_short_viewport {
-                    vec![
-                        Constraint::Length(2), // Title
-                        Constraint::Min(3),    // Table gets most space
-                        Constraint::Length(1), // Bottom bar
-                        Constraint::Length(1), // Empty space at bottom (only when enough space)
-                    ]
+                    if self.cloud_message.is_some() {
+                        vec![
+                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Length(1), // Cloud message area
+                            Constraint::Length(1), // Gap
+                            Constraint::Length(1), // Bottom bar (pagination)
+                        ]
+                    } else {
+                        vec![
+                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Length(1), // Bottom bar (pagination)
+                        ]
+                    }
                 } else if task_list_area.width < 60 {
-                    vec![
-                        Constraint::Length(2), // Title
-                        Constraint::Min(3),    // Table gets most space
-                        Constraint::Length(2), // Bottom bar (2 units for stacked layout)
-                    ]
+                    if self.cloud_message.is_some() {
+                        vec![
+                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Length(1), // Cloud message area
+                            Constraint::Length(1), // Gap
+                            Constraint::Length(2), // Bottom bar (2 units for stacked layout)
+                        ]
+                    } else {
+                        vec![
+                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Length(2), // Bottom bar (2 units for stacked layout)
+                        ]
+                    }
                 } else {
-                    vec![
-                        Constraint::Length(2), // Title
-                        Constraint::Min(3),    // Table gets most space
-                        Constraint::Length(1), // Bottom bar
-                    ]
+                    if self.cloud_message.is_some() {
+                        vec![
+                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Length(1), // Cloud message area
+                            Constraint::Length(1), // Gap 
+                            Constraint::Length(1), // Bottom bar
+                        ]
+                    } else {
+                        vec![
+                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Length(1), // Bottom bar
+                        ]
+                    }
                 })
                 .split(task_list_area);
 
-            let title_area = chunks[0];
-            let table_area = chunks[1];
-            let bottom_area = chunks[2];
-
-            // Create vertical layout with top padding
-            let title_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1), // Top padding
-                    Constraint::Min(1),    // Content
-                ])
-                .split(title_area);
-
-            let title_style = if self.is_dimmed
-                || matches!(self.focus, Focus::MultipleOutput(_) | Focus::HelpPopup)
-            {
-                Style::default().add_modifier(Modifier::DIM)
+            let table_area = chunks[0];
+            
+            // Set up bottom areas based on cloud message presence
+            let (cloud_message_area, pagination_area) = if self.cloud_message.is_some() {
+                (Some(chunks[1]), chunks[3]) // Cloud message in area 1, pagination in area 3 (after gap)
             } else {
-                Style::default()
+                (None, chunks[1]) // No cloud message, pagination in area 1
             };
 
-            // Determine the color of the NX logo based on task status
-            let logo_color = if self.tasks.is_empty() {
-                // No tasks
-                Color::Cyan
-            } else {
-                let all_tasks_completed = self.tasks.iter().all(|t| {
+            // Reserve space for pagination and borders
+            self.recalculate_pages(table_area.height.saturating_sub(6));
+
+            let visible_entries = self.selection_manager.get_current_page_entries();
+            let selected_style = Style::default().add_modifier(Modifier::BOLD);
+            let normal_style = Style::default();
+
+            // Determine if all tasks are completed
+            let all_tasks_completed = !self.tasks.is_empty()
+                && self.tasks.iter().all(|t| {
                     matches!(
                         t.status,
                         TaskStatus::Success
@@ -1216,181 +1132,114 @@ impl Component for TasksList {
                     )
                 });
 
-                if all_tasks_completed {
-                    // All tasks are completed, check if any failed
-                    let has_failures = self
-                        .tasks
-                        .iter()
-                        .any(|t| matches!(t.status, TaskStatus::Failure));
-                    if has_failures {
-                        Color::Red
-                    } else {
-                        Color::Green
-                    }
+            // Determine the color of the NX logo based on task status
+            let logo_color = if self.tasks.is_empty() {
+                // No tasks
+                Color::Cyan
+            } else if all_tasks_completed {
+                // All tasks are completed, check if any failed
+                let has_failures = self
+                    .tasks
+                    .iter()
+                    .any(|t| matches!(t.status, TaskStatus::Failure));
+                if has_failures {
+                    Color::Red
                 } else {
-                    // Tasks are still running
-                    Color::Cyan
-                }
-            };
-
-            let mut title_text = vec![
-                Span::raw(" "),
-                Span::styled(" NX ", title_style.bold().bg(logo_color).fg(Color::Black)),
-                Span::raw("   "),
-            ];
-
-            // Calculate the width of the fixed elements (everything except title text)
-            let fixed_width: usize = title_text.iter().map(|s| s.width()).sum();
-            let available_width = title_chunks[1].width as usize;
-
-            // If we're in collapsed mode (output panes showing), we may need to truncate
-            if collapsed_mode && !self.title_text.is_empty() {
-                // Calculate how much space we have for title text
-                let space_for_title = available_width.saturating_sub(fixed_width + 3); // +3 for ellipsis
-
-                // If title is too long, truncate with ellipsis
-                if self.title_text.len() > space_for_title {
-                    title_text.push(Span::styled(
-                        format!(" {}", &self.title_text[..space_for_title.saturating_sub(1)]),
-                        title_style.fg(Color::Gray),
-                    ));
-                    title_text.push(Span::styled("...", title_style.fg(Color::DarkGray)));
-                } else {
-                    title_text.push(Span::styled(
-                        format!(" {}", self.title_text),
-                        title_style.fg(Color::Gray),
-                    ));
+                    Color::Green
                 }
             } else {
-                // Original behavior for non-collapsed mode
-                title_text.push(Span::styled(
-                    format!(" {}", self.title_text),
-                    title_style.fg(Color::Gray),
-                ));
-            }
+                // Tasks are still running
+                Color::Cyan
+            };
 
-            // Add padding to fill remaining space
-            let content_width: usize = title_text.iter().map(|s| s.width()).sum();
+            // Get header cells using the existing method but add NX logo to first cell
+            let mut header_cells = self.get_header_cells(collapsed_mode);
 
-            // Check if we have a cloud message to display
-            if let Some(message) = &self.cloud_message {
-                if !self.has_visible_panes() {
-                    // Extract URL for styling if present
-                    if let Some(url_pos) = message.find("https://") {
-                        let prefix = &message[0..url_pos];
-                        let url = &message[url_pos..];
+            // Get the style based on whether all tasks are completed
+            let title_color = if all_tasks_completed {
+                // Use the logo color for the title text as well
+                logo_color
+            } else {
+                Color::White
+            };
 
-                        // Calculate widths
-                        let url_width = url.len();
-                        let prefix_width = prefix.len();
-                        let total_message_width = prefix_width + url_width;
-                        let buffer_space = 3; // Add a buffer space between title and message
+            // Apply modifiers based on focus state
+            let title_style = if self.is_dimmed
+                || matches!(self.focus, Focus::MultipleOutput(_) | Focus::HelpPopup)
+            {
+                // Keep the color but add dim modifier
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::DIM)
+            } else {
+                // Normal style with bold
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(Modifier::BOLD)
+            };
 
-                        // Define styles
-                        let mut non_url_style = Style::default().fg(Color::DarkGray);
-                        let mut url_style =
-                            Style::default().fg(Color::LightCyan).bold().underlined();
+            // Replace the first cell with a new one containing the NX logo and title
+            if !header_cells.is_empty() {
+                // Determine if we need to add the vertical line with top corner
+                let show_parallel = self.should_show_parallel_section();
+                let is_first_page = self.selection_manager.get_current_page() == 0;
+                let running = self
+                    .tasks
+                    .iter()
+                    .filter(|t| matches!(t.status, TaskStatus::InProgress))
+                    .count();
 
-                        // Apply dim modifier if the component is dimmed
-                        if self.is_dimmed {
-                            non_url_style = non_url_style.dim();
-                            url_style = url_style.dim();
-                        }
+                // First cell: Just the NX logo and box corner if needed
+                let mut first_cell_spans = vec![Span::styled(
+                    " NX ",
+                    title_style.bold().bg(logo_color).fg(Color::Black),
+                )];
 
-                        // Case 1: Enough space for everything (prefix + URL + buffer)
-                        if available_width >= content_width + total_message_width + buffer_space {
-                            // Add padding between title and cloud message
-                            let padding_width =
-                                available_width - content_width - total_message_width;
-                            title_text.push(Span::raw(" ".repeat(padding_width)));
-
-                            // Add the message parts with appropriate styling
-                            title_text.push(Span::styled(prefix, non_url_style));
-                            title_text.push(Span::styled(url, url_style));
-                        }
-                        // Case 2: Only enough space for URL + buffer (no prefix)
-                        else if available_width >= content_width + url_width + buffer_space {
-                            // Add padding between title and URL to keep URL right-aligned
-                            let padding_width = available_width - content_width - url_width;
-                            title_text.push(Span::raw(" ".repeat(padding_width)));
-
-                            // Add only the URL
-                            title_text.push(Span::styled(url, url_style));
-                        }
-                        // Case 3: Not enough space for URL with current title, truncate title
-                        else if available_width >= url_width + 15 {
-                            // Ensure minimum title width + buffer
-                            // Save original title text length for comparison
-                            let original_title_len = title_text.len();
-
-                            // Keep truncating the title until we have enough space for the URL + buffer
-                            while title_text.iter().map(|s| s.width()).sum::<usize>()
-                                > available_width - url_width - buffer_space
-                            {
-                                if title_text.len() <= 2 {
-                                    // Keep at least the NX logo
-                                    break;
-                                }
-                                title_text.pop();
-                            }
-
-                            // Add ellipsis if we truncated the title (with dimmed styling)
-                            if title_text.len() < original_title_len {
-                                title_text.push(Span::styled("...", non_url_style));
-                            }
-
-                            // Add padding to ensure URL is right-aligned
-                            let current_width = title_text.iter().map(|s| s.width()).sum::<usize>();
-                            let padding_width = available_width - current_width - url_width;
-                            title_text.push(Span::raw(" ".repeat(padding_width)));
-
-                            // Add the URL
-                            title_text.push(Span::styled(url, url_style));
-                        }
-                        // Case 4: Not enough space for anything meaningful
-                        else {
-                            // Just add padding to fill available space
-                            if available_width > content_width {
-                                title_text
-                                    .push(Span::raw(" ".repeat(available_width - content_width)));
-                            }
-                        }
-                    } else {
-                        // No URL, add the whole message if there's space (with buffer)
-                        let buffer_space = 3;
-                        if available_width > content_width + message.len() + buffer_space {
-                            let padding_width = available_width - content_width - message.len();
-                            title_text.push(Span::raw(" ".repeat(padding_width)));
-                            title_text
-                                .push(Span::styled(message, Style::default().fg(Color::DarkGray)));
-                        } else if available_width > content_width {
-                            // Not enough space, just add padding
-                            title_text.push(Span::raw(" ".repeat(available_width - content_width)));
-                        }
-                    }
-                } else if available_width > content_width {
-                    // Has visible panes, just add padding
-                    title_text.push(Span::raw(" ".repeat(available_width - content_width)));
+                // Add box corner if needed
+                if show_parallel && is_first_page && running > 0 && !self.is_loading_state() {
+                    first_cell_spans.push(Span::raw(" "));
+                    // Top corner of the box
                 }
-            } else if available_width > content_width {
-                // No cloud message, add regular padding
-                title_text.push(Span::raw(" ".repeat(available_width - content_width)));
+
+                // Second cell: Put the title text in the task name column
+                let mut second_cell_spans = vec![];
+
+                // Add title with appropriate styling
+                if all_tasks_completed {
+                    // Get the total time if available
+                    if let (Some(first_start), Some(last_end)) = (
+                        self.tasks.iter().filter_map(|t| t.start_time).min(),
+                        self.tasks.iter().filter_map(|t| t.end_time).max(),
+                    ) {
+                        // Create text with separate spans for completed message and time
+                        let title_segment = format!("Completed {} ", self.title_text);
+                        let time_str = utils::format_duration_since(first_start, last_end);
+
+                        second_cell_spans.push(Span::styled(title_segment, title_style));
+                        second_cell_spans.push(Span::styled(
+                            format!("({})", time_str),
+                            Style::default().dim(),
+                        ));
+                    } else {
+                        second_cell_spans.push(Span::styled(
+                            format!("Completed {}", self.title_text),
+                            title_style,
+                        ));
+                    }
+                } else {
+                    second_cell_spans.push(Span::styled(
+                        format!("Running {}...", self.title_text),
+                        title_style,
+                    ));
+                }
+
+                // Update the cells
+                header_cells[0] = Cell::from(Line::from(first_cell_spans));
+                if header_cells.len() > 1 {
+                    header_cells[1] = Cell::from(Line::from(second_cell_spans));
+                }
             }
-
-            let paragraph = Paragraph::new(Line::from(title_text)).alignment(Alignment::Left);
-
-            // Render the title
-            f.render_widget(paragraph, title_chunks[1]);
-
-            // Reserve space for pagination and borders
-            self.recalculate_pages(table_area.height.saturating_sub(6));
-
-            let visible_entries = self.selection_manager.get_current_page_entries();
-            let selected_style = Style::default().add_modifier(Modifier::BOLD);
-            let normal_style = Style::default();
-
-            // Get header cells using the new method
-            let header_cells = self.get_header_cells(collapsed_mode);
 
             let header = Row::new(header_cells)
                 .style(normal_style)
@@ -1413,9 +1262,9 @@ impl Component for TasksList {
                             Span::raw(" "),
                             // Add vertical line for visual continuity, only on first page
                             if is_first_page {
-                                Span::styled(" │", Style::default().fg(Color::Cyan))
+                                Span::styled("│", Style::default().fg(Color::Cyan))
                             } else {
-                                Span::raw("  ")
+                                Span::raw(" ")
                             },
                             Span::raw("   "),
                         ])),
@@ -1428,9 +1277,9 @@ impl Component for TasksList {
                             Span::raw(" "),
                             // Add vertical line for visual continuity, only on first page
                             if is_first_page {
-                                Span::styled(" │", Style::default().fg(Color::Cyan))
+                                Span::styled("│", Style::default().fg(Color::Cyan))
                             } else {
-                                Span::raw("  ")
+                                Span::raw(" ")
                             },
                             Span::raw("   "),
                         ])),
@@ -1451,6 +1300,66 @@ impl Component for TasksList {
                 } else {
                     vec![
                         Cell::from("   "), // Just spaces for indentation, no vertical line
+                        Cell::from(""),
+                        Cell::from(""),
+                        Cell::from(""),
+                    ]
+                };
+                all_rows.push(Row::new(empty_cells).height(1).style(normal_style));
+            }
+
+            // Add the cloud message after the first empty row if all tasks are completed
+            if all_tasks_completed && self.cloud_message.is_some() {
+                let message = self.cloud_message.as_ref().unwrap();
+
+                // Parse the message to style the URL differently if present
+                let message_cells = if let Some(url_pos) = message.find("https://") {
+                    let prefix = &message[0..url_pos];
+                    let url = &message[url_pos..];
+
+                    let cell_content = Line::from(vec![
+                        Span::styled(prefix, Style::default().fg(Color::DarkGray)),
+                        Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
+                    ]);
+
+                    if collapsed_mode {
+                        vec![
+                            Cell::from("   "), // First column
+                            Cell::from(cell_content),
+                        ]
+                    } else {
+                        vec![
+                            Cell::from("   "), // First column
+                            Cell::from(cell_content),
+                            Cell::from(""),
+                            Cell::from(""),
+                        ]
+                    }
+                } else {
+                    // No URL in the message
+                    if collapsed_mode {
+                        vec![
+                            Cell::from("   "), // First column
+                            Cell::from(Span::styled(message, Style::default().fg(Color::DarkGray))),
+                        ]
+                    } else {
+                        vec![
+                            Cell::from("   "), // First column
+                            Cell::from(Span::styled(message, Style::default().fg(Color::DarkGray))),
+                            Cell::from(""),
+                            Cell::from(""),
+                        ]
+                    }
+                };
+
+                all_rows.push(Row::new(message_cells).height(1).style(normal_style));
+
+                // Add empty row after cloud message
+                let empty_cells = if collapsed_mode {
+                    vec![Cell::from(""), Cell::from("")]
+                } else {
+                    vec![
+                        Cell::from(""),
                         Cell::from(""),
                         Cell::from(""),
                         Cell::from(""),
@@ -1540,76 +1449,76 @@ impl Component for TasksList {
 
                         let status_cell = match task.status {
                             TaskStatus::Success => Cell::from(Line::from(vec![
-                                // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Static spacing for non-parallel tasks
-                                Span::raw("  "),
-                                Span::styled(" ✔", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
+                                Span::styled("✔", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
                             ])),
                             TaskStatus::Failure => Cell::from(Line::from(vec![
-                                // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Static spacing for non-parallel tasks
-                                Span::raw("  "),
-                                Span::styled(" ✖", Style::default().fg(Color::Red)),
+                                Span::raw(" "),
+                                Span::styled("✖", Style::default().fg(Color::Red)),
+                                Span::raw(" "),
                             ])),
                             TaskStatus::Skipped => Cell::from(Line::from(vec![
-                                // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Static spacing for non-parallel tasks
-                                Span::raw("  "),
-                                Span::styled(" ⏭", Style::default().fg(Color::Yellow)),
+                                Span::raw(" "),
+                                Span::styled("⏭", Style::default().fg(Color::Yellow)),
+                                Span::raw(" "),
                             ])),
                             TaskStatus::LocalCacheKeptExisting => Cell::from(Line::from(vec![
-                                // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Static spacing for non-parallel tasks
-                                Span::raw("  "),
-                                Span::styled(" ⚡", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
+                                Span::styled("◼", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
                             ])),
                             TaskStatus::LocalCache => Cell::from(Line::from(vec![
-                                // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Static spacing for non-parallel tasks
-                                Span::raw("  "),
-                                Span::styled(" ⚡", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
+                                Span::styled("◼", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
                             ])),
                             TaskStatus::RemoteCache => Cell::from(Line::from(vec![
-                                // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Static spacing for non-parallel tasks
-                                Span::raw("  "),
-                                Span::styled(" ⚡▼", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
+                                Span::styled("▼", Style::default().fg(Color::Green)),
+                                Span::raw(" "),
                             ])),
                             TaskStatus::InProgress => {
                                 let throbber_chars =
                                     ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
                                 let throbber_char =
                                     throbber_chars[self.throbber_counter % throbber_chars.len()];
-                                Cell::from(Line::from(vec![
-                                    // Selection indicator (fixed width of 2)
-                                    Span::raw(if is_selected { ">" } else { " " }),
-                                    // Add space and vertical line for parallel section (fixed position)
-                                    if is_in_parallel_section
-                                        && self.selection_manager.get_current_page() == 0
-                                    {
-                                        Span::styled(" │", Style::default().fg(Color::Cyan))
-                                    } else {
-                                        Span::raw("  ")
-                                    },
-                                    Span::raw(" "),
-                                    Span::styled(
-                                        throbber_char.to_string(),
-                                        Style::default().fg(Color::LightCyan),
-                                    ),
-                                ]))
+
+                                let mut spans =
+                                    vec![Span::raw(if is_selected { ">" } else { " " })];
+
+                                // Add vertical line for parallel section if needed (always takes 1 character width)
+                                if is_in_parallel_section
+                                    && self.selection_manager.get_current_page() == 0
+                                {
+                                    spans.push(Span::styled("│", Style::default().fg(Color::Cyan)));
+                                } else {
+                                    spans.push(Span::raw(" "));
+                                }
+
+                                // Add the spinner with consistent spacing
+                                spans.push(Span::styled(
+                                    throbber_char.to_string(),
+                                    Style::default().fg(Color::LightCyan),
+                                ));
+
+                                // Add trailing space to maintain consistent width
+                                spans.push(Span::raw(" "));
+
+                                Cell::from(Line::from(spans))
                             }
                             TaskStatus::NotStarted => Cell::from(Line::from(vec![
-                                // Selection indicator (fixed width of 2)
                                 Span::raw(if is_selected { ">" } else { " " }),
-                                // Static spacing for non-parallel tasks
-                                Span::raw("  "),
-                                Span::styled(" ·", Style::default().fg(Color::DarkGray)),
+                                // No need for parallel section check for pending tasks
+                                Span::raw(" "),
+                                Span::styled("·", Style::default().fg(Color::DarkGray)),
+                                Span::raw(" "),
                             ])),
                         };
 
@@ -1732,11 +1641,11 @@ impl Component for TasksList {
                                     Span::raw(" "),
                                     // Add space and vertical line for parallel section (fixed position)
                                     if is_first_page {
-                                        Span::styled(" │", Style::default().fg(Color::Cyan))
+                                        Span::styled("│", Style::default().fg(Color::Cyan))
                                     } else {
                                         Span::raw("  ")
                                     },
-                                    Span::styled(" ·  ", Style::default().dim()),
+                                    Span::styled("·  ", Style::default().dim()),
                                 ])),
                                 Cell::from(Span::styled(
                                     "Waiting for task...",
@@ -1750,11 +1659,11 @@ impl Component for TasksList {
                                     Span::raw(" "),
                                     // Add space and vertical line for parallel section (fixed position)
                                     if is_first_page {
-                                        Span::styled(" │", Style::default().fg(Color::Cyan))
+                                        Span::styled("│", Style::default().fg(Color::Cyan))
                                     } else {
                                         Span::raw("  ")
                                     },
-                                    Span::styled(" ·  ", Style::default().dim()),
+                                    Span::styled("·  ", Style::default().dim()),
                                 ])),
                                 Cell::from(Span::styled(
                                     "Waiting for task...",
@@ -1776,9 +1685,9 @@ impl Component for TasksList {
                                     Span::raw(" "),
                                     // Add bottom corner for the box, or just spaces if not on first page
                                     if is_first_page {
-                                        Span::styled(" └", Style::default().fg(Color::Cyan))
+                                        Span::styled("└", Style::default().fg(Color::Cyan))
                                     } else {
-                                        Span::raw("  ")
+                                        Span::raw(" ")
                                     },
                                     Span::raw("   "),
                                 ])),
@@ -1791,9 +1700,9 @@ impl Component for TasksList {
                                     Span::raw(" "),
                                     // Add bottom corner for the box, or just spaces if not on first page
                                     if is_first_page {
-                                        Span::styled(" └", Style::default().fg(Color::Cyan))
+                                        Span::styled("└", Style::default().fg(Color::Cyan))
                                     } else {
-                                        Span::raw("  ")
+                                        Span::raw(" ")
                                     },
                                     Span::raw("   "),
                                 ])),
@@ -1821,11 +1730,11 @@ impl Component for TasksList {
             }));
 
             let constraints = if collapsed_mode {
-                vec![Constraint::Length(8), Constraint::Fill(1)]
+                vec![Constraint::Length(6), Constraint::Fill(1)]
             } else {
                 vec![
-                    Constraint::Length(8),  // Status icon
-                    Constraint::Fill(1),    // Task name
+                    Constraint::Length(6),  // Status icon with NX logo
+                    Constraint::Fill(1),    // Task name with title
                     Constraint::Length(30), // Cache status (increased width)
                     Constraint::Length(15), // Duration (increased width)
                 ]
@@ -1838,6 +1747,30 @@ impl Component for TasksList {
 
             f.render_widget(t, table_area);
 
+            // Render cloud message in its dedicated area if it exists
+            if let Some(message_area) = cloud_message_area {
+                if let Some(message) = &self.cloud_message {
+                    // Create text with URL styling if needed
+                    let message_line = if let Some(url_pos) = message.find("https://") {
+                        let prefix = &message[0..url_pos];
+                        let url = &message[url_pos..];
+                        Line::from(vec![
+                            Span::raw("  "), // Left padding to align with table content
+                            Span::styled(prefix, Style::default().fg(Color::DarkGray)),
+                            Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
+                        ])
+                    } else {
+                        Line::from(vec![
+                            Span::raw("  "), // Left padding to align with table content
+                            Span::styled(message, Style::default().fg(Color::DarkGray)),
+                        ])
+                    };
+
+                    let cloud_message_paragraph = Paragraph::new(message_line);
+                    f.render_widget(cloud_message_paragraph, message_area);
+                }
+            }
+
             let needs_vertical_bottom_layout = area.width < 90 || has_short_viewport;
 
             // Bottom bar layout
@@ -1849,53 +1782,69 @@ impl Component for TasksList {
                         Constraint::Length(1), // Pagination
                         Constraint::Length(1), // Help text
                     ])
-                    .split(bottom_area)
+                    .split(pagination_area)
             } else {
-                // Original horizontal layout
+                // Original horizontal layout - use the full width for a single area
                 Layout::default()
                     .direction(Direction::Horizontal)
-                    .constraints(if collapsed_mode {
-                        vec![
-                            Constraint::Length(20), // Fixed width for pagination
-                            Constraint::Fill(1),    // Flexible space for help text
-                        ]
-                    } else {
-                        vec![
-                            Constraint::Length(20), // Fixed width for pagination
-                            Constraint::Fill(1),    // Flexible space for help text
-                            Constraint::Length(20), // Mirror image for alignment
-                        ]
-                    })
-                    .split(bottom_area)
+                    .constraints(vec![
+                        Constraint::Fill(1), // Full width for both pagination and help text
+                    ])
+                    .split(pagination_area)
             };
 
             // Determine if bottom bar elements should be dimmed
             let should_dim = matches!(self.focus, Focus::MultipleOutput(_));
 
-            // Pagination (always shown)
+            // Get pagination info
             let total_pages = self.selection_manager.total_pages();
             let current_page = self.selection_manager.get_current_page();
+
+            // Create combined bottom bar with pagination on left and help text centered
             let pagination = Pagination::new(current_page, total_pages);
-            pagination.render(f, bottom_layout[0], should_dim);
 
-            // Help text
-            let help_text = HelpText::new(collapsed_mode, should_dim, needs_vertical_bottom_layout);
-            if !self.is_dimmed {
-                // If dealing with a constrained viewport, we need to align horizontally
-                if needs_vertical_bottom_layout {
-                    // Add empty space in front of help text for better alignment
-                    let help_text_area = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([
-                            Constraint::Length(9), // Match pagination indentation
-                            Constraint::Fill(1),
-                        ])
-                        .split(bottom_layout[1])[1];
+            // Calculate how much space the pagination needs (with arrows)
+            let pagination_width = 20; // Increase width for pagination with arrows
 
-                    help_text.render(f, help_text_area);
-                } else {
-                    // Original rendering without padding
+            // Create help text component
+            let help_text = HelpText::new(collapsed_mode, should_dim, false); // Never align help text left
+
+            // Always draw pagination
+            if needs_vertical_bottom_layout {
+                // For vertical layout, render pagination and help text separately
+                let pagination_area = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Length(2), // Left padding to align with content
+                        Constraint::Min(12),   // Space for pagination
+                        Constraint::Fill(1),   // Remaining space
+                    ])
+                    .split(bottom_layout[0])[1];
+
+                pagination.render(f, pagination_area, should_dim);
+
+                // Only show help text if not dimmed
+                if !self.is_dimmed {
                     help_text.render(f, bottom_layout[1]);
+                }
+            } else {
+                // For horizontal layout, render pagination on left and help text centered in the same area
+                // Create a dedicated area just for pagination on the left with proper alignment
+                let pagination_area = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Length(2),  // Left padding to align with task content
+                        Constraint::Length(10), // Width for pagination
+                        Constraint::Fill(1),    // Remaining space
+                    ])
+                    .split(bottom_layout[0])[1];
+
+                pagination.render(f, pagination_area, should_dim);
+
+                // Only show help text if not dimmed
+                if !self.is_dimmed {
+                    // Let the help text use the full width for proper centering
+                    help_text.render(f, bottom_layout[0]);
                 }
             }
         }

@@ -106,15 +106,16 @@ async function getTerminalOutputLifeCycle(
       const [project, target] = mainTaskId.split(':');
       titleText = `${target} ${project}`;
       if (tasks.length > 1) {
-        titleText += ` (and ${tasks.length - 1} requisite ${taskText})`;
+        titleText += `, and ${tasks.length - 1} requisite ${taskText})`;
       }
     } else {
       titleText =
-        nxArgs.targets.join(' ') + ` for ${projectNames.length} ${projectText}`;
+        nxArgs.targets.join(', ') +
+        ` for ${projectNames.length} ${projectText}`;
       if (tasks.length > projectNames.length) {
-        titleText += ` (and ${
+        titleText += `, and ${
           tasks.length - projectNames.length
-        } requisite ${taskText})`;
+        } requisite ${taskText}`;
       }
     }
 

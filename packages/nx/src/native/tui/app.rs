@@ -664,7 +664,7 @@ impl App {
                     let area = f.area();
 
                     // Check for minimum viable viewport size at the app level
-                    if area.height < 12 || area.width < 40 {
+                    if area.height < 10 || area.width < 40 {
                         let message = Line::from(vec![
                             Span::raw("  "),
                             Span::styled(
@@ -675,7 +675,7 @@ impl App {
                                     .fg(Color::Black),
                             ),
                             Span::raw("  "),
-                            Span::raw("Please make your terminal viewport larger in order to view the tasks UI"),
+                            Span::raw("Please make your terminal viewport larger in order to view the terminal UI"),
                         ]);
 
                         // Create empty lines for vertical centering
