@@ -68,6 +68,9 @@ import chalk = require('chalk');
 import { getTuiTerminalSummaryLifeCycle } from './life-cycles/tui-summary-life-cycle';
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+const originalConsoleLog = console.log.bind(console);
+const originalConsoleError = console.error.bind(console);
 
 async function getTerminalOutputLifeCycle(
   initiatingProject: string,
@@ -145,17 +148,20 @@ async function getTerminalOutputLifeCycle(
         restoreTerminal();
       })
       .finally(() => {
-        // Revert the patched stdout.write method
+        // Revert the patched methods
         process.stdout.write = originalStdoutWrite;
+        process.stderr.write = originalStderrWrite;
+        console.log = originalConsoleLog;
+        console.error = originalConsoleError;
         printSummary();
       });
 
     /**
-     * Patch stdout.write method to pass Nx Cloud client logs to the TUI via the lifecycle
+     * Patch stdout.write and stderr.write methods to pass Nx Cloud client logs to the TUI via the lifecycle
      */
     const createPatchedLogWrite = (
-      originalWrite: typeof process.stdout.write
-    ): typeof process.stdout.write => {
+      originalWrite: typeof process.stdout.write | typeof process.stderr.write
+    ): typeof process.stdout.write | typeof process.stderr.write => {
       // @ts-ignore
       return (chunk, encoding, callback) => {
         // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
@@ -181,7 +187,28 @@ async function getTerminalOutputLifeCycle(
       };
     };
 
+    const createPatchedConsoleMethod = (
+      originalMethod: typeof console.log | typeof console.error
+    ): typeof console.log | typeof console.error => {
+      return (...args: any[]) => {
+        // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
+        const stackTrace = new Error().stack;
+        const isNxCloudLog = stackTrace.includes(
+          join(workspaceRoot, '.nx', 'cache', 'cloud')
+        );
+        if (!isNxCloudLog) {
+          return originalMethod(...args);
+        }
+        // No-op the Nx Cloud client logs
+      };
+    };
+
     process.stdout.write = createPatchedLogWrite(originalStdoutWrite);
+    process.stderr.write = createPatchedLogWrite(originalStderrWrite);
+
+    // The cloud client calls console.log when NX_VERBOSE_LOGGING is set to true
+    console.log = createPatchedConsoleMethod(originalConsoleLog);
+    console.error = createPatchedConsoleMethod(originalConsoleError);
 
     return {
       lifeCycle: new CompositeLifeCycle([lifeCycle, tsLifeCycle]),
