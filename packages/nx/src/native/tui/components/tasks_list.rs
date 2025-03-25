@@ -835,13 +835,41 @@ impl TasksList {
     /// Creates header cells for the task list table.
     /// Shows either filter input or task status based on current state.
     fn get_header_cells(&self, collapsed_mode: bool) -> Vec<Cell> {
-        let should_dim = matches!(self.focus, Focus::MultipleOutput(_));
+        let should_dim = matches!(self.focus, Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup);
         let status_style = if should_dim {
             Style::default().fg(Color::DarkGray).dim()
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Determine if all tasks are completed and the status color to use
+        let all_tasks_completed = !self.tasks.is_empty()
+            && self.tasks.iter().all(|t| {
+                matches!(
+                    t.status,
+                    TaskStatus::Success
+                        | TaskStatus::Failure
+                        | TaskStatus::Skipped
+                        | TaskStatus::LocalCache
+                        | TaskStatus::LocalCacheKeptExisting
+                        | TaskStatus::RemoteCache
+                )
+            });
+            
+        let header_color = if all_tasks_completed {
+            let has_failures = self
+                .tasks
+                .iter()
+                .any(|t| matches!(t.status, TaskStatus::Failure));
+            if has_failures {
+                Color::Red
+            } else {
+                Color::Green
+            }
+        } else {
+            Color::Cyan
+        };
+        
         // Show filter input when in filter mode
         if self.filter_mode || !self.filter_text.is_empty() {
             let filter_text = format!("Filter: {}", self.filter_text);
@@ -860,12 +888,12 @@ impl TasksList {
                     Cell::from(filter_text).style(filter_style),
                     Cell::from(Line::from("Cache").right_aligned()).style(
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(header_color)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Cell::from(Line::from("Duration").right_aligned()).style(
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(header_color)
                             .add_modifier(Modifier::BOLD),
                     ),
                 ]
@@ -889,12 +917,12 @@ impl TasksList {
                     Cell::from(status_text),
                     Cell::from(Line::from("Cache").right_aligned()).style(
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(header_color)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Cell::from(Line::from("Duration").right_aligned()).style(
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(header_color)
                             .add_modifier(Modifier::BOLD),
                     ),
                 ]
@@ -1757,123 +1785,130 @@ impl Component for TasksList {
 
                 // Render cloud message if it exists
                 if let Some(message) = &self.cloud_message {
-                    // Get available width for the cloud message
-                    let available_width = bottom_bar_layout[2].width as usize;
+                    // Only proceed with cloud message rendering if:
+                    // - We're not in collapsed mode, OR
+                    // - The message contains a URL
+                    let should_show_message = !collapsed_mode || message.contains("https://");
                     
-                    // Create text with URL styling if needed
-                    let message_line = if let Some(url_pos) = message.find("https://") {
-                        let prefix = &message[0..url_pos];
-                        let url = &message[url_pos..];
+                    if should_show_message {
+                        // Get available width for the cloud message
+                        let available_width = bottom_bar_layout[2].width as usize;
                         
-                        // Determine styles based on dimming state
-                        let prefix_style = if should_dim {
-                            Style::default().fg(Color::DarkGray).dim()
-                        } else {
-                            Style::default().fg(Color::DarkGray)
-                        };
-                        
-                        let url_style = if should_dim {
-                            Style::default().fg(Color::LightCyan).underlined().dim()
-                        } else {
-                            Style::default().fg(Color::LightCyan).underlined()
-                        };
-                        
-                        // In collapsed mode or with limited width, prioritize showing the URL
-                        if collapsed_mode || available_width < 30 {
-                            // Show only the URL, completely omit prefix if needed
-                            if url.len() > available_width.saturating_sub(3) {
-                                // URL is too long, we need to truncate it
-                                let shortened_url = if url.contains("nx.app") {
-                                    // For nx.app links, try to preserve the run ID at the end
-                                    let parts: Vec<&str> = url.split('/').collect();
-                                    if parts.len() > 4 {
-                                        // Try to show the domain and run ID
-                                        format!("{}/../{}", parts[0], parts[parts.len() - 1])
-                                    } else {
-                                        // Just truncate
-                                        format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
-                                    }
-                                } else {
-                                    // For other URLs, just truncate
-                                    format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
-                                };
-                                
-                                Line::from(vec![
-                                    Span::styled(shortened_url, url_style),
-                                ])
+                        // Create text with URL styling if needed
+                        let message_line = if let Some(url_pos) = message.find("https://") {
+                            let prefix = &message[0..url_pos];
+                            let url = &message[url_pos..];
+                            
+                            // Determine styles based on dimming state
+                            let prefix_style = if should_dim {
+                                Style::default().fg(Color::DarkGray).dim()
                             } else {
-                                // URL fits, show it all
-                                Line::from(vec![
-                                    Span::styled(url, url_style),
-                                ])
-                            }
-                        } else {
-                            // Normal mode with enough space - try to show prefix and URL
-                            if prefix.len() + url.len() > available_width.saturating_sub(3) {
-                                // Not enough space for both, prioritize URL
-                                let shortened_url = if url.contains("nx.app") {
-                                    // For nx.app links, try to preserve the run ID at the end
-                                    let parts: Vec<&str> = url.split('/').collect();
-                                    if parts.len() > 4 {
-                                        // Try to show the domain and run ID
-                                        format!("{}/../{}", parts[0], parts[parts.len() - 1])
+                                Style::default().fg(Color::DarkGray)
+                            };
+                            
+                            let url_style = if should_dim {
+                                Style::default().fg(Color::LightCyan).underlined().dim()
+                            } else {
+                                Style::default().fg(Color::LightCyan).underlined()
+                            };
+                            
+                            // In collapsed mode or with limited width, prioritize showing the URL
+                            if collapsed_mode || available_width < 30 {
+                                // Show only the URL, completely omit prefix if needed
+                                if url.len() > available_width.saturating_sub(3) {
+                                    // URL is too long, we need to truncate it
+                                    let shortened_url = if url.contains("nx.app") {
+                                        // For nx.app links, try to preserve the run ID at the end
+                                        let parts: Vec<&str> = url.split('/').collect();
+                                        if parts.len() > 4 {
+                                            // Try to show the domain and run ID
+                                            format!("{}/../{}", parts[0], parts[parts.len() - 1])
+                                        } else {
+                                            // Just truncate
+                                            format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                        }
                                     } else {
-                                        // Just truncate
+                                        // For other URLs, just truncate
                                         format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
-                                    }
-                                } else {
-                                    // For other URLs, just truncate
-                                    format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
-                                };
-                                
-                                // If we still have space for a bit of prefix, show it
-                                let remaining_space = available_width.saturating_sub(shortened_url.len() + 3);
-                                if remaining_space > 5 && !prefix.is_empty() {
-                                    let shortened_prefix = if prefix.len() > remaining_space {
-                                        format!("{}...", &prefix[..remaining_space.saturating_sub(3)])
-                                    } else {
-                                        prefix.to_string()
                                     };
                                     
                                     Line::from(vec![
-                                        Span::styled(shortened_prefix, prefix_style),
                                         Span::styled(shortened_url, url_style),
                                     ])
                                 } else {
-                                    // No space for prefix, just show URL
+                                    // URL fits, show it all
                                     Line::from(vec![
-                                        Span::styled(shortened_url, url_style),
+                                        Span::styled(url, url_style),
                                     ])
                                 }
                             } else {
-                                // Enough space for both prefix and URL
-                                Line::from(vec![
-                                    Span::styled(prefix, prefix_style),
-                                    Span::styled(url, url_style),
-                                ])
+                                // Normal mode with enough space - try to show prefix and URL
+                                if prefix.len() + url.len() > available_width.saturating_sub(3) {
+                                    // Not enough space for both, prioritize URL
+                                    let shortened_url = if url.contains("nx.app") {
+                                        // For nx.app links, try to preserve the run ID at the end
+                                        let parts: Vec<&str> = url.split('/').collect();
+                                        if parts.len() > 4 {
+                                            // Try to show the domain and run ID
+                                            format!("{}/../{}", parts[0], parts[parts.len() - 1])
+                                        } else {
+                                            // Just truncate
+                                            format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                        }
+                                    } else {
+                                        // For other URLs, just truncate
+                                        format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                    };
+                                    
+                                    // If we still have space for a bit of prefix, show it
+                                    let remaining_space = available_width.saturating_sub(shortened_url.len() + 3);
+                                    if remaining_space > 5 && !prefix.is_empty() {
+                                        let shortened_prefix = if prefix.len() > remaining_space {
+                                            format!("{}...", &prefix[..remaining_space.saturating_sub(3)])
+                                        } else {
+                                            prefix.to_string()
+                                        };
+                                        
+                                        Line::from(vec![
+                                            Span::styled(shortened_prefix, prefix_style),
+                                            Span::styled(shortened_url, url_style),
+                                        ])
+                                    } else {
+                                        // No space for prefix, just show URL
+                                        Line::from(vec![
+                                            Span::styled(shortened_url, url_style),
+                                        ])
+                                    }
+                                } else {
+                                    // Enough space for both prefix and URL
+                                    Line::from(vec![
+                                        Span::styled(prefix, prefix_style),
+                                        Span::styled(url, url_style),
+                                    ])
+                                }
                             }
-                        }
-                    } else {
-                        // Handle non-URL messages
-                        let display_message = if message.len() > available_width {
-                            format!("{}...", &message[..available_width.saturating_sub(3)])
                         } else {
-                            message.clone()
+                            // Handle non-URL messages (only shown in non-collapsed mode)
+                            let display_message = if message.len() > available_width {
+                                format!("{}...", &message[..available_width.saturating_sub(3)])
+                            } else {
+                                message.clone()
+                            };
+                            
+                            let message_style = if should_dim {
+                                Style::default().fg(Color::DarkGray).dim()
+                            } else {
+                                Style::default().fg(Color::DarkGray)
+                            };
+                            
+                            Line::from(vec![
+                                Span::styled(display_message, message_style),
+                            ])
                         };
-                        
-                        let message_style = if should_dim {
-                            Style::default().fg(Color::DarkGray).dim()
-                        } else {
-                            Style::default().fg(Color::DarkGray)
-                        };
-                        
-                        Line::from(vec![
-                            Span::styled(display_message, message_style),
-                        ])
-                    };
 
-                    let cloud_message_paragraph = Paragraph::new(message_line).alignment(Alignment::Right);
-                    f.render_widget(cloud_message_paragraph, bottom_bar_layout[2]);
+                        let cloud_message_paragraph = Paragraph::new(message_line).alignment(Alignment::Right);
+                        f.render_widget(cloud_message_paragraph, bottom_bar_layout[2]);
+                    }
                 }
             }
         }
