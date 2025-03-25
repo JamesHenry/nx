@@ -85,67 +85,158 @@ export function getTuiTerminalSummaryLifeCycle({
   };
 
   const printSummary = () => {
-    const lines = [''];
+    const isRunOne = initiatingProject && targets?.length === 1;
+
     // Handles when the user interrupts the process
     timeTakenText ??= prettyTime(process.hrtime(start));
-
-    // Treats cancellation as a failure
-    const failure = totalFailedTasks > 0 || inProgressTasks.size > 0;
 
     if (totalTasks === 0) {
       console.log(output.applyNxPrefix('gray', 'No tasks were run'));
       return;
     }
 
-    const initiatingTaskId = initiatingProject
-      ? createTaskId(initiatingProject, targets[0], args.configuration)
-      : null;
+    if (isRunOne) {
+      printRunOneSummary();
+    } else {
+      printRunManySummary();
+    }
+  };
+
+  const printRunOneSummary = () => {
+    let lines: string[] = [];
+    const failure = totalSuccessfulTasks !== totalTasks;
+
+    // Prints task outputs in the order they were completed
+    // above the summary, since run-one should print all task results.
+    for (const taskId of taskIdsInOrderOfCompletion) {
+      const { terminalOutput, taskStatus } = tasksToTerminalOutputs[taskId];
+      output.logCommandOutput(taskId, taskStatus, terminalOutput);
+    }
+
+    lines.push(...output.getVerticalSeparatorLines(failure ? 'red' : 'green'));
+
+    if (!failure) {
+      const text = `Successfully ran ${formatTargetsAndProjects(
+        [initiatingProject],
+        targets,
+        tasks
+      )}`;
+
+      const taskOverridesLines = [];
+      if (Object.keys(overrides).length > 0) {
+        taskOverridesLines.push('');
+        taskOverridesLines.push(
+          `${EXTENDED_LEFT_PAD}${output.dim.green('With additional flags:')}`
+        );
+        Object.entries(overrides)
+          .map(([flag, value]) =>
+            output.dim.green(formatFlags(EXTENDED_LEFT_PAD, flag, value))
+          )
+          .forEach((arg) => taskOverridesLines.push(arg));
+      }
+
+      lines.push(
+        output.applyNxPrefix(
+          'green',
+          output.colors.green(text) + output.dim(` (${timeTakenText})`)
+        ),
+        ...taskOverridesLines
+      );
+
+      if (totalCachedTasks > 0) {
+        lines.push(
+          output.dim(
+            `${EOL}Nx read the output from the cache instead of running the command for ${totalCachedTasks} out of ${totalTasks} tasks.`
+          )
+        );
+      }
+      lines = [output.colors.green(lines.join(EOL))];
+    } else if (totalCompletedTasks === totalTasks) {
+      let text = `Ran target ${output.bold(
+        targets[0]
+      )} for project ${output.bold(initiatingProject)}`;
+      if (tasks.length > 1) {
+        text += ` and ${output.bold(tasks.length - 1)} task(s) they depend on`;
+      }
+
+      const taskOverridesLines = [];
+      if (Object.keys(overrides).length > 0) {
+        taskOverridesLines.push('');
+        taskOverridesLines.push(
+          `${EXTENDED_LEFT_PAD}${output.dim.red('With additional flags:')}`
+        );
+        Object.entries(overrides)
+          .map(([flag, value]) =>
+            output.dim.red(formatFlags(EXTENDED_LEFT_PAD, flag, value))
+          )
+          .forEach((arg) => taskOverridesLines.push(arg));
+      }
+
+      const viewLogs = viewLogsFooterRows(totalFailedTasks);
+
+      lines = [
+        output.colors.red([
+          output.applyNxPrefix(
+            'red',
+            output.colors.red(text) + output.dim(` (${timeTakenText})`)
+          ),
+          ...taskOverridesLines,
+          '',
+          `${LEFT_PAD}${output.colors.red(
+            figures.cross
+          )}${SPACER}${totalFailedTasks}${`/${totalCompletedTasks}`} failed`,
+          `${LEFT_PAD}${output.dim(
+            figures.tick
+          )}${SPACER}${totalSuccessfulTasks}${`/${totalCompletedTasks}`} succeeded ${output.dim(
+            `[${totalCachedTasks} read from cache]`
+          )}`,
+          ...viewLogs,
+        ]),
+      ];
+    } else {
+      lines = [
+        output.colors.red(
+          output.applyNxPrefix(
+            'red',
+            output.colors.red(
+              `Cancelled running target ${output.bold(
+                targets[0]
+              )} for project ${output.bold(initiatingProject)}`
+            ) + output.dim(` (${timeTakenText})`)
+          )
+        ),
+      ];
+    }
+
+    // adds some vertical space after the summary to avoid bunching against terminal
+    lines.push('');
+
+    console.log(lines.join(EOL));
+  };
+
+  const printRunManySummary = () => {
+    const lines: string[] = [];
+    const failure = totalSuccessfulTasks !== totalTasks;
 
     for (const taskId of taskIdsInOrderOfCompletion) {
-      if (taskId !== initiatingTaskId) {
-        const { terminalOutput, taskStatus } = tasksToTerminalOutputs[taskId];
-        if (taskStatus === 'failure') {
-          output.logCommandOutput(taskId, taskStatus, terminalOutput);
-          lines.push(
-            `${LEFT_PAD}${output.colors.red(
-              figures.cross
-            )}${SPACER}${output.colors.gray('nx run ')}${taskId}`
-          );
-        } else {
-          lines.push(
-            `${LEFT_PAD}${output.colors.green(
-              figures.tick
-            )}${SPACER}${output.colors.gray('nx run ')}${taskId}`
-          );
-        }
-      }
-    }
-
-    for (const taskId of inProgressTasks) {
-      if (taskId !== initiatingTaskId) {
+      const { terminalOutput, taskStatus } = tasksToTerminalOutputs[taskId];
+      if (taskStatus === 'failure') {
+        output.logCommandOutput(taskId, taskStatus, terminalOutput);
         lines.push(
-          `${LEFT_PAD}${output.colors.cyan(
-            figures.circleDotted
-          )}${SPACER}${taskId}`
+          `${LEFT_PAD}${output.colors.red(
+            figures.cross
+          )}${SPACER}${output.colors.gray('nx run ')}${taskId}`
+        );
+      } else {
+        lines.push(
+          `${LEFT_PAD}${output.colors.green(
+            figures.tick
+          )}${SPACER}${output.colors.gray('nx run ')}${taskId}`
         );
       }
     }
 
-    if (initiatingProject && targets?.length === 1) {
-      const results = tasksToTerminalOutputs[initiatingTaskId];
-      if (results) {
-        output.logCommandOutput(
-          initiatingTaskId,
-          results.taskStatus,
-          results.terminalOutput
-        );
-        output.addVerticalSeparator(failure ? 'red' : 'green');
-      }
-    } else if (totalTasks > 0) {
-      lines.push(
-        ...output.getVerticalSeparatorLines(failure ? 'red' : 'green')
-      );
-    }
+    lines.push(...output.getVerticalSeparatorLines(failure ? 'red' : 'green'));
 
     if (totalSuccessfulTasks === totalTasks) {
       const successSummaryRows = [];
@@ -213,47 +304,87 @@ export function getTuiTerminalSummaryLifeCycle({
         ),
         ...taskOverridesRows,
         '',
-        output.dim(
-          `${LEFT_PAD}${output.dim(
-            figures.tick
-          )}${SPACER}${totalSuccessfulTasks}${`/${totalCompletedTasks}`} succeeded ${output.dim(
-            `[${totalCachedTasks} read from cache]`
-          )}`
-        ),
-        '',
-        `${LEFT_PAD}${output.colors.red(
-          figures.cross
-        )}${SPACER}${totalFailedTasks}${`/${totalCompletedTasks}`} targets failed, including the following:`,
-        '',
-        `${failedTasksForPrinting
-          .map(
-            (t) =>
-              `${EXTENDED_LEFT_PAD}${output.colors.red(
-                '-'
-              )} ${output.formatCommand(t.toString())}`
-          )
-          .join('\n')}`,
       ];
+      if (totalCompletedTasks > 0) {
+        if (totalSuccessfulTasks > 0) {
+          failureSummaryRows.push(
+            output.dim(
+              `${LEFT_PAD}${output.dim(
+                figures.tick
+              )}${SPACER}${totalSuccessfulTasks}${`/${totalCompletedTasks}`} succeeded ${output.dim(
+                `[${totalCachedTasks} read from cache]`
+              )}`
+            ),
+            ''
+          );
+        }
+        if (totalFailedTasks > 0) {
+          failureSummaryRows.push(
+            `${LEFT_PAD}${output.colors.red(
+              figures.cross
+            )}${SPACER}${totalFailedTasks}${`/${totalCompletedTasks}`} targets failed, including the following:`,
+            '',
+            `${failedTasksForPrinting
+              .map(
+                (t) =>
+                  `${EXTENDED_LEFT_PAD}${output.colors.red(
+                    '-'
+                  )} ${output.formatCommand(t.toString())}`
+              )
+              .join('\n')}`,
+            ''
+          );
+          if (failedTasks.size > numFailedToPrint) {
+            failureSummaryRows.push(
+              output.dim(
+                `${EXTENDED_LEFT_PAD}...and ${
+                  failedTasks.size - numFailedToPrint
+                } more...`
+              )
+            );
+          }
+        }
+        if (totalCompletedTasks !== totalTasks) {
+          const remainingTasks = totalTasks - totalCompletedTasks;
+          if (inProgressTasks.size) {
+            failureSummaryRows.push(
+              `${LEFT_PAD}${output.colors.red(figures.ellipsis)}${SPACER}${
+                inProgressTasks.size
+              }${`/${totalTasks}`} targets were in progress, including the following:`,
+              '',
+              `${Array.from(inProgressTasks)
+                .map(
+                  (t) =>
+                    `${EXTENDED_LEFT_PAD}${output.colors.red(
+                      '-'
+                    )} ${output.formatCommand(t.toString())}`
+                )
+                .join(EOL)}`,
+              ''
+            );
+          }
+          if (remainingTasks - inProgressTasks.size > 0) {
+            failureSummaryRows.push(
+              output.dim(
+                `${LEFT_PAD}${output.colors.red(figures.ellipsis)}${SPACER}${
+                  remainingTasks - inProgressTasks.size
+                }${`/${totalTasks}`} targets had not started.`
+              ),
+              ''
+            );
+          }
+        }
 
-      if (failedTasks.size > numFailedToPrint) {
-        failureSummaryRows.push(
-          output.dim(
-            `${EXTENDED_LEFT_PAD}...and ${
-              failedTasks.size - numFailedToPrint
-            } more...`
-          )
-        );
+        failureSummaryRows.push(...viewLogsFooterRows(failedTasks.size));
+
+        lines.push(output.colors.red(failureSummaryRows.join(EOL)));
       }
 
-      failureSummaryRows.push(...viewLogsFooterRows(failedTasks.size));
+      // adds some vertical space after the summary to avoid bunching against terminal
+      lines.push('');
 
-      lines.push(output.colors.red(failureSummaryRows.join(EOL)));
+      console.log(lines.join(EOL));
     }
-
-    // adds some vertical space after the summary to avoid bunching against terminal
-    lines.push('');
-
-    console.log(lines.join(EOL));
   };
   return { lifeCycle, printSummary };
 }
