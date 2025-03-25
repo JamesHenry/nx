@@ -1060,42 +1060,42 @@ impl Component for TasksList {
                 .constraints(if has_short_viewport {
                     if self.cloud_message.is_some() {
                         vec![
-                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Fill(1),    // Table gets most space
                             Constraint::Length(1), // Cloud message area
                             Constraint::Length(1), // Gap
                             Constraint::Length(1), // Bottom bar (pagination)
                         ]
                     } else {
                         vec![
-                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Fill(1),    // Table gets most space
                             Constraint::Length(1), // Bottom bar (pagination)
                         ]
                     }
                 } else if task_list_area.width < 60 {
                     if self.cloud_message.is_some() {
                         vec![
-                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Fill(1),    // Table gets most space
                             Constraint::Length(1), // Cloud message area
                             Constraint::Length(1), // Gap
                             Constraint::Length(2), // Bottom bar (2 units for stacked layout)
                         ]
                     } else {
                         vec![
-                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Fill(1),    // Table gets most space
                             Constraint::Length(2), // Bottom bar (2 units for stacked layout)
                         ]
                     }
                 } else {
                     if self.cloud_message.is_some() {
                         vec![
-                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Fill(1),    // Table gets most space
                             Constraint::Length(1), // Cloud message area
-                            Constraint::Length(1), // Gap 
+                            Constraint::Length(1), // Gap
                             Constraint::Length(1), // Bottom bar
                         ]
                     } else {
                         vec![
-                            Constraint::Min(3),    // Table gets most space
+                            Constraint::Fill(1),    // Table gets most space
                             Constraint::Length(1), // Bottom bar
                         ]
                     }
@@ -1103,7 +1103,7 @@ impl Component for TasksList {
                 .split(task_list_area);
 
             let table_area = chunks[0];
-            
+
             // Set up bottom areas based on cloud message presence
             let (cloud_message_area, pagination_area) = if self.cloud_message.is_some() {
                 (Some(chunks[1]), chunks[3]) // Cloud message in area 1, pagination in area 3 (after gap)
@@ -1112,7 +1112,7 @@ impl Component for TasksList {
             };
 
             // Reserve space for pagination and borders
-            self.recalculate_pages(table_area.height.saturating_sub(6));
+            self.recalculate_pages(table_area.height.saturating_sub(4));
 
             let visible_entries = self.selection_manager.get_current_page_entries();
             let selected_style = Style::default().add_modifier(Modifier::BOLD);
@@ -1300,66 +1300,6 @@ impl Component for TasksList {
                 } else {
                     vec![
                         Cell::from("   "), // Just spaces for indentation, no vertical line
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                    ]
-                };
-                all_rows.push(Row::new(empty_cells).height(1).style(normal_style));
-            }
-
-            // Add the cloud message after the first empty row if all tasks are completed
-            if all_tasks_completed && self.cloud_message.is_some() {
-                let message = self.cloud_message.as_ref().unwrap();
-
-                // Parse the message to style the URL differently if present
-                let message_cells = if let Some(url_pos) = message.find("https://") {
-                    let prefix = &message[0..url_pos];
-                    let url = &message[url_pos..];
-
-                    let cell_content = Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(Color::DarkGray)),
-                        Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
-                    ]);
-
-                    if collapsed_mode {
-                        vec![
-                            Cell::from("   "), // First column
-                            Cell::from(cell_content),
-                        ]
-                    } else {
-                        vec![
-                            Cell::from("   "), // First column
-                            Cell::from(cell_content),
-                            Cell::from(""),
-                            Cell::from(""),
-                        ]
-                    }
-                } else {
-                    // No URL in the message
-                    if collapsed_mode {
-                        vec![
-                            Cell::from("   "), // First column
-                            Cell::from(Span::styled(message, Style::default().fg(Color::DarkGray))),
-                        ]
-                    } else {
-                        vec![
-                            Cell::from("   "), // First column
-                            Cell::from(Span::styled(message, Style::default().fg(Color::DarkGray))),
-                            Cell::from(""),
-                            Cell::from(""),
-                        ]
-                    }
-                };
-
-                all_rows.push(Row::new(message_cells).height(1).style(normal_style));
-
-                // Add empty row after cloud message
-                let empty_cells = if collapsed_mode {
-                    vec![Cell::from(""), Cell::from("")]
-                } else {
-                    vec![
-                        Cell::from(""),
                         Cell::from(""),
                         Cell::from(""),
                         Cell::from(""),
