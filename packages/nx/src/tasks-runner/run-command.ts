@@ -122,12 +122,10 @@ async function getTerminalOutputLifeCycle(
       }
     }
 
-    const lifeCycle = new AppLifeCycle(
-      tasks,
-      pinnedTasks,
-      nxArgs ?? {},
-      nxJson.tui ?? {},
-      titleText
+    let resolveRenderIsDonePromise: (value: void) => void;
+    // Default renderIsDone that will be overridden if the TUI is used
+    let renderIsDone = new Promise<void>(
+      (resolve) => (resolveRenderIsDonePromise = resolve)
     );
 
     const { lifeCycle: tsLifeCycle, printSummary } =
@@ -137,81 +135,101 @@ async function getTerminalOutputLifeCycle(
         args: nxArgs,
         overrides: overridesWithoutHidden,
         initiatingProject,
+        resolveRenderIsDonePromise,
       });
 
-    const renderIsDone = new Promise<void>((resolve) => {
-      lifeCycle.__init(() => {
-        resolve();
-      });
-    })
-      .then(() => {
-        restoreTerminal();
-      })
-      .finally(() => {
-        // Revert the patched methods
-        process.stdout.write = originalStdoutWrite;
-        process.stderr.write = originalStderrWrite;
-        console.log = originalConsoleLog;
-        console.error = originalConsoleError;
+    if (tasks.length === 0) {
+      renderIsDone = renderIsDone.then(() => {
         printSummary();
       });
+    }
 
-    /**
-     * Patch stdout.write and stderr.write methods to pass Nx Cloud client logs to the TUI via the lifecycle
-     */
-    const createPatchedLogWrite = (
-      originalWrite: typeof process.stdout.write | typeof process.stderr.write
-    ): typeof process.stdout.write | typeof process.stderr.write => {
-      // @ts-ignore
-      return (chunk, encoding, callback) => {
-        // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
-        const stackTrace = new Error().stack;
-        const isNxCloudLog = stackTrace.includes(
-          join(workspaceRoot, '.nx', 'cache', 'cloud')
-        );
-        if (!isNxCloudLog) {
-          return originalWrite(chunk, encoding, callback);
-        }
+    const lifeCycles: LifeCycle[] = [tsLifeCycle];
+    // Only run the TUI if there are tasks to run
+    if (tasks.length > 0) {
+      const lifeCycle = new AppLifeCycle(
+        tasks,
+        pinnedTasks,
+        nxArgs ?? {},
+        nxJson.tui ?? {},
+        titleText
+      );
+      lifeCycles.unshift(lifeCycle);
 
-        // Do not bother to store logs with only whitespace characters, they aren't relevant for the TUI
-        const trimmedChunk = chunk.toString().trim();
-        if (trimmedChunk.length) {
-          // Remove ANSI escape codes, the TUI will control the formatting
-          lifeCycle.__setCloudMessage(stripVTControlCharacters(trimmedChunk));
-        }
-        // Preserve original behavior around callback and return value, just in case
-        if (callback) {
-          callback();
-        }
-        return true;
+      /**
+       * Patch stdout.write and stderr.write methods to pass Nx Cloud client logs to the TUI via the lifecycle
+       */
+      const createPatchedLogWrite = (
+        originalWrite: typeof process.stdout.write | typeof process.stderr.write
+      ): typeof process.stdout.write | typeof process.stderr.write => {
+        // @ts-ignore
+        return (chunk, encoding, callback) => {
+          // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
+          const stackTrace = new Error().stack;
+          const isNxCloudLog = stackTrace.includes(
+            join(workspaceRoot, '.nx', 'cache', 'cloud')
+          );
+          if (!isNxCloudLog) {
+            return originalWrite(chunk, encoding, callback);
+          }
+
+          // Do not bother to store logs with only whitespace characters, they aren't relevant for the TUI
+          const trimmedChunk = chunk.toString().trim();
+          if (trimmedChunk.length) {
+            // Remove ANSI escape codes, the TUI will control the formatting
+            lifeCycle.__setCloudMessage(stripVTControlCharacters(trimmedChunk));
+          }
+          // Preserve original behavior around callback and return value, just in case
+          if (callback) {
+            callback();
+          }
+          return true;
+        };
       };
-    };
 
-    const createPatchedConsoleMethod = (
-      originalMethod: typeof console.log | typeof console.error
-    ): typeof console.log | typeof console.error => {
-      return (...args: any[]) => {
-        // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
-        const stackTrace = new Error().stack;
-        const isNxCloudLog = stackTrace.includes(
-          join(workspaceRoot, '.nx', 'cache', 'cloud')
-        );
-        if (!isNxCloudLog) {
-          return originalMethod(...args);
-        }
-        // No-op the Nx Cloud client logs
+      const createPatchedConsoleMethod = (
+        originalMethod: typeof console.log | typeof console.error
+      ): typeof console.log | typeof console.error => {
+        return (...args: any[]) => {
+          // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
+          const stackTrace = new Error().stack;
+          const isNxCloudLog = stackTrace.includes(
+            join(workspaceRoot, '.nx', 'cache', 'cloud')
+          );
+          if (!isNxCloudLog) {
+            return originalMethod(...args);
+          }
+          // No-op the Nx Cloud client logs
+        };
       };
-    };
 
-    process.stdout.write = createPatchedLogWrite(originalStdoutWrite);
-    process.stderr.write = createPatchedLogWrite(originalStderrWrite);
+      process.stdout.write = createPatchedLogWrite(originalStdoutWrite);
+      process.stderr.write = createPatchedLogWrite(originalStderrWrite);
 
-    // The cloud client calls console.log when NX_VERBOSE_LOGGING is set to true
-    console.log = createPatchedConsoleMethod(originalConsoleLog);
-    console.error = createPatchedConsoleMethod(originalConsoleError);
+      // The cloud client calls console.log when NX_VERBOSE_LOGGING is set to true
+      console.log = createPatchedConsoleMethod(originalConsoleLog);
+      console.error = createPatchedConsoleMethod(originalConsoleError);
+
+      renderIsDone = new Promise<void>((resolve) => {
+        lifeCycle.__init(() => {
+          resolve();
+        });
+      })
+        .then(() => {
+          restoreTerminal();
+        })
+        .finally(() => {
+          // Revert the patched methods
+          process.stdout.write = originalStdoutWrite;
+          process.stderr.write = originalStderrWrite;
+          console.log = originalConsoleLog;
+          console.error = originalConsoleError;
+          printSummary();
+        });
+    }
 
     return {
-      lifeCycle: new CompositeLifeCycle([lifeCycle, tsLifeCycle]),
+      lifeCycle: new CompositeLifeCycle(lifeCycles),
       renderIsDone,
     };
   }

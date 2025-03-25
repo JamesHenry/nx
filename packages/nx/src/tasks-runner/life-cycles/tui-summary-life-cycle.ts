@@ -19,12 +19,14 @@ export function getTuiTerminalSummaryLifeCycle({
   args,
   overrides,
   initiatingProject,
+  resolveRenderIsDonePromise,
 }: {
   projectNames: string[];
   tasks: Task[];
   args: { targets?: string[]; configuration?: string; parallel?: number };
   overrides: Record<string, unknown>;
   initiatingProject: string;
+  resolveRenderIsDonePromise: (value: void) => void;
 }) {
   const lifeCycle = {} as Partial<LifeCycle>;
 
@@ -82,6 +84,7 @@ export function getTuiTerminalSummaryLifeCycle({
 
   lifeCycle.endCommand = () => {
     timeTakenText = prettyTime(process.hrtime(start));
+    resolveRenderIsDonePromise();
   };
 
   const printSummary = () => {
@@ -91,7 +94,7 @@ export function getTuiTerminalSummaryLifeCycle({
     timeTakenText ??= prettyTime(process.hrtime(start));
 
     if (totalTasks === 0) {
-      console.log(output.applyNxPrefix('gray', 'No tasks were run'));
+      console.log(`\n${output.applyNxPrefix('gray', 'No tasks were run')}\n`);
       return;
     }
 
