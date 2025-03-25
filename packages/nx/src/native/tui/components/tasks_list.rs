@@ -836,7 +836,7 @@ impl TasksList {
 
     /// Creates header cells for the task list table.
     /// Shows either filter input or task status based on current state.
-    fn get_header_cells(&self, collapsed_mode: bool) -> Vec<Cell> {
+    fn get_header_cells(&self, collapsed_mode: bool, narrow_viewport: bool) -> Vec<Cell> {
         let should_dim = matches!(
             self.focus,
             Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup
@@ -887,6 +887,16 @@ impl TasksList {
 
         if collapsed_mode {
             vec![status_cell, Cell::from(status_text)]
+        } else if narrow_viewport {
+            vec![
+                status_cell,
+                Cell::from(status_text),
+                Cell::from(Line::from("Duration").right_aligned()).style(
+                    Style::default()
+                        .fg(header_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]
         } else {
             vec![
                 status_cell,
@@ -1021,8 +1031,7 @@ impl TasksList {
 
 impl Component for TasksList {
     fn draw(&mut self, f: &mut Frame<'_>, area: Rect, _app_state: &mut AppState) -> Result<()> {
-        // Determine if we should use collapsed mode based on viewport width
-        let collapsed_mode = self.has_visible_panes() || area.width < 100;
+        let collapsed_mode = self.has_visible_panes();
 
         // Calculate the width for the task list
         let task_list_width = if self.task_list_hidden {
@@ -1131,8 +1140,10 @@ impl Component for TasksList {
                 Color::Cyan
             };
 
+            let narrow_viewport = area.width < 90;
+
             // Get header cells using the existing method but add NX logo to first cell
-            let mut header_cells = self.get_header_cells(collapsed_mode);
+            let mut header_cells = self.get_header_cells(collapsed_mode, narrow_viewport);
 
             // Get the style based on whether all tasks are completed
             let title_color = if all_tasks_completed {
@@ -1249,6 +1260,22 @@ impl Component for TasksList {
                         ])),
                         Cell::from(""),
                     ]
+                } else if narrow_viewport {
+                    vec![
+                        Cell::from(Line::from(vec![
+                            // Space for selection indicator
+                            Span::raw(" "),
+                            // Add vertical line for visual continuity, only on first page
+                            if is_first_page {
+                                Span::styled("│", Style::default().fg(Color::Cyan))
+                            } else {
+                                Span::raw(" ")
+                            },
+                            Span::raw("   "),
+                        ])),
+                        Cell::from(""),
+                        Cell::from(""),
+                    ]
                 } else {
                     vec![
                         Cell::from(Line::from(vec![
@@ -1274,6 +1301,12 @@ impl Component for TasksList {
                 let empty_cells = if collapsed_mode {
                     vec![
                         Cell::from("   "), // Just spaces for indentation, no vertical line
+                        Cell::from(""),
+                    ]
+                } else if narrow_viewport {
+                    vec![
+                        Cell::from("   "), // Just spaces for indentation, no vertical line
+                        Cell::from(""),
                         Cell::from(""),
                     ]
                 } else {
@@ -1409,58 +1442,88 @@ impl Component for TasksList {
                         let mut row_cells = vec![status_cell, name];
 
                         if !collapsed_mode {
-                            // Cache status cell
-                            let cache_cell = Cell::from(
-                                Line::from(match task.cache_status.as_str() {
-                                    CACHE_STATUS_NOT_YET_KNOWN | CACHE_STATUS_NOT_APPLICABLE => {
-                                        vec![Span::styled(
-                                            task.cache_status.clone(),
-                                            if is_selected {
-                                                Style::default().add_modifier(Modifier::BOLD)
-                                            } else {
-                                                Style::default().dim()
-                                            },
-                                        )]
-                                    }
-                                    _ => vec![Span::styled(
-                                        task.cache_status.clone(),
-                                        if is_selected {
-                                            Style::default().add_modifier(Modifier::BOLD)
-                                        } else {
-                                            Style::default()
-                                        },
-                                    )],
-                                })
-                                .right_aligned(),
-                            );
-
-                            // Duration cell
-                            let duration_cell = Cell::from(
-                                Line::from(match task.duration.as_str() {
-                                    "" | "Continuous" | DURATION_NOT_YET_KNOWN => {
-                                        vec![Span::styled(
+                            if narrow_viewport {
+                                // In narrow viewport mode (not collapsed), show only duration column
+                                let duration_cell = Cell::from(
+                                    Line::from(match task.duration.as_str() {
+                                        "" | "Continuous" | DURATION_NOT_YET_KNOWN => {
+                                            vec![Span::styled(
+                                                task.duration.clone(),
+                                                if is_selected {
+                                                    Style::default().add_modifier(Modifier::BOLD)
+                                                } else {
+                                                    Style::default().dim()
+                                                },
+                                            )]
+                                        }
+                                        _ => vec![Span::styled(
                                             task.duration.clone(),
                                             if is_selected {
                                                 Style::default().add_modifier(Modifier::BOLD)
                                             } else {
-                                                Style::default().dim()
+                                                Style::default()
                                             },
-                                        )]
-                                    }
-                                    _ => vec![Span::styled(
-                                        task.duration.clone(),
-                                        if is_selected {
-                                            Style::default().add_modifier(Modifier::BOLD)
-                                        } else {
-                                            Style::default()
-                                        },
-                                    )],
-                                })
-                                .right_aligned(),
-                            );
+                                        )],
+                                    })
+                                    .right_aligned(),
+                                );
+                                
+                                row_cells.push(duration_cell);
+                            } else {
+                                // In full width mode, show both cache and duration columns
+                                // Cache status cell
+                                let cache_cell = Cell::from(
+                                    Line::from(match task.cache_status.as_str() {
+                                        CACHE_STATUS_NOT_YET_KNOWN | CACHE_STATUS_NOT_APPLICABLE => {
+                                            vec![Span::styled(
+                                                task.cache_status.clone(),
+                                                if is_selected {
+                                                    Style::default().add_modifier(Modifier::BOLD)
+                                                } else {
+                                                    Style::default().dim()
+                                                },
+                                            )]
+                                        }
+                                        _ => vec![Span::styled(
+                                            task.cache_status.clone(),
+                                            if is_selected {
+                                                Style::default().add_modifier(Modifier::BOLD)
+                                            } else {
+                                                Style::default()
+                                            },
+                                        )],
+                                    })
+                                    .right_aligned(),
+                                );
 
-                            row_cells.push(cache_cell);
-                            row_cells.push(duration_cell);
+                                // Duration cell
+                                let duration_cell = Cell::from(
+                                    Line::from(match task.duration.as_str() {
+                                        "" | "Continuous" | DURATION_NOT_YET_KNOWN => {
+                                            vec![Span::styled(
+                                                task.duration.clone(),
+                                                if is_selected {
+                                                    Style::default().add_modifier(Modifier::BOLD)
+                                                } else {
+                                                    Style::default().dim()
+                                                },
+                                            )]
+                                        }
+                                        _ => vec![Span::styled(
+                                            task.duration.clone(),
+                                            if is_selected {
+                                                Style::default().add_modifier(Modifier::BOLD)
+                                            } else {
+                                                Style::default()
+                                            },
+                                        )],
+                                    })
+                                    .right_aligned(),
+                                );
+
+                                row_cells.push(cache_cell);
+                                row_cells.push(duration_cell);
+                            }
                         } else {
                             // No cache/duration cells in collapsed mode
                         }
@@ -1505,6 +1568,25 @@ impl Component for TasksList {
                                     Style::default().dim(),
                                 )),
                             ]
+                        } else if narrow_viewport {
+                            vec![
+                                Cell::from(Line::from(vec![
+                                    // Space for selection indicator (fixed width of 2)
+                                    Span::raw(" "),
+                                    // Add space and vertical line for parallel section (fixed position)
+                                    if is_first_page {
+                                        Span::styled("│", Style::default().fg(Color::Cyan))
+                                    } else {
+                                        Span::raw("  ")
+                                    },
+                                    Span::styled("·  ", Style::default().dim()),
+                                ])),
+                                Cell::from(Span::styled(
+                                    "Waiting for task...",
+                                    Style::default().dim(),
+                                )),
+                                Cell::from(""),
+                            ]
                         } else {
                             vec![
                                 Cell::from(Line::from(vec![
@@ -1546,6 +1628,22 @@ impl Component for TasksList {
                                 ])),
                                 Cell::from(""),
                             ]
+                        } else if narrow_viewport {
+                            vec![
+                                Cell::from(Line::from(vec![
+                                    // Space for selection indicator (fixed width of 2)
+                                    Span::raw(" "),
+                                    // Add bottom corner for the box, or just spaces if not on first page
+                                    if is_first_page {
+                                        Span::styled("└", Style::default().fg(Color::Cyan))
+                                    } else {
+                                        Span::raw(" ")
+                                    },
+                                    Span::raw("   "),
+                                ])),
+                                Cell::from(""),
+                                Cell::from(""),
+                            ]
                         } else {
                             vec![
                                 Cell::from(Line::from(vec![
@@ -1569,6 +1667,8 @@ impl Component for TasksList {
                         // Regular separator row outside the parallel section
                         let empty_cells = if collapsed_mode {
                             vec![Cell::from(""), Cell::from("")]
+                        } else if narrow_viewport {
+                            vec![Cell::from(""), Cell::from(""), Cell::from("")]
                         } else {
                             vec![
                                 Cell::from(""),
@@ -1584,6 +1684,13 @@ impl Component for TasksList {
 
             let constraints = if collapsed_mode {
                 vec![Constraint::Length(6), Constraint::Fill(1)]
+            } else if narrow_viewport {
+                vec![
+                    Constraint::Length(6), // Status icon with NX logo
+                    Constraint::Fill(1),   // Task name with title
+                    // No cache status for narrow viewports
+                    Constraint::Length(15), // Duration (increased width)
+                ]
             } else {
                 vec![
                     Constraint::Length(6),  // Status icon with NX logo
@@ -1650,7 +1757,7 @@ impl Component for TasksList {
             }
 
             // Render cloud message in its dedicated area if it exists
-            let needs_vertical_bottom_layout = area.width < 90 || has_short_viewport;
+            let needs_vertical_bottom_layout = narrow_viewport || has_short_viewport;
 
             // Bottom bar layout
             let bottom_layout = if needs_vertical_bottom_layout {
