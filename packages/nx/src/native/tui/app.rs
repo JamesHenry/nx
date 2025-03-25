@@ -103,7 +103,10 @@ impl App {
         // If the status is a cache hit, we need to create a new parser and writer for the task in order to print the output
         if is_cache_hit(status) {
             let (parser, parser_and_writer) = TasksList::create_empty_parser_and_noop_writer();
-            TasksList::write_output_to_parser(parser, output);
+
+            // Add ANSI escape sequence to hide cursor at the end of output, it would be confusing to have it visible when a task is a cache hit
+            let output_with_hidden_cursor = format!("{}\x1b[?25l", output);
+            TasksList::write_output_to_parser(parser, output_with_hidden_cursor);
 
             if let Some(tasks_list) = self
                 .components

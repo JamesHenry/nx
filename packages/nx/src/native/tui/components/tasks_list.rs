@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::{any::Any, io};
 use vt100_ctt::Parser;
 
-use crate::native::tui::utils::{normalize_newlines, sort_task_items};
+use crate::native::tui::utils::{is_cache_hit, normalize_newlines, sort_task_items};
 use crate::native::tui::{
     action::Action,
     app::Focus,
@@ -835,7 +835,10 @@ impl TasksList {
     /// Creates header cells for the task list table.
     /// Shows either filter input or task status based on current state.
     fn get_header_cells(&self, collapsed_mode: bool) -> Vec<Cell> {
-        let should_dim = matches!(self.focus, Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup);
+        let should_dim = matches!(
+            self.focus,
+            Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup
+        );
         let status_style = if should_dim {
             Style::default().fg(Color::DarkGray).dim()
         } else {
@@ -855,7 +858,7 @@ impl TasksList {
                         | TaskStatus::RemoteCache
                 )
             });
-            
+
         let header_color = if all_tasks_completed {
             let has_failures = self
                 .tasks
@@ -869,7 +872,7 @@ impl TasksList {
         } else {
             Color::Cyan
         };
-        
+
         // Show filter input when in filter mode
         if self.filter_mode || !self.filter_text.is_empty() {
             let filter_text = format!("Filter: {}", self.filter_text);
@@ -1035,10 +1038,11 @@ impl TasksList {
     // TODO: move to app level when the focus and pty data handling are moved up
     // Writes the given output to the given parser, used for the case where a task is a cache hit, or when it is run outside of the rust pseudo-terminal
     pub fn write_output_to_parser(parser: ParserArc, output: String) {
+        let normalized_output = normalize_newlines(output.as_bytes());
         parser
             .write()
             .unwrap()
-            .write_all(&normalize_newlines(output.as_bytes()))
+            .write_all(&normalized_output)
             .unwrap();
     }
 }
@@ -1706,7 +1710,10 @@ impl Component for TasksList {
             };
 
             // Determine if bottom bar elements should be dimmed
-            let should_dim = matches!(self.focus, Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup);
+            let should_dim = matches!(
+                self.focus,
+                Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup
+            );
 
             // Get pagination info
             let total_pages = self.selection_manager.total_pages();
@@ -1752,8 +1759,8 @@ impl Component for TasksList {
                         [
                             Constraint::Length(12), // Width for pagination (with padding)
                             Constraint::Length(24), // Smaller width for help text when cloud message is present
-                            Constraint::Fill(1),    // Cloud message gets most of the remaining space
-                            Constraint::Length(2),  // Right-side padding for breathing room
+                            Constraint::Fill(1), // Cloud message gets most of the remaining space
+                            Constraint::Length(2), // Right-side padding for breathing room
                         ]
                     } else {
                         [
@@ -1789,29 +1796,29 @@ impl Component for TasksList {
                     // - We're not in collapsed mode, OR
                     // - The message contains a URL
                     let should_show_message = !collapsed_mode || message.contains("https://");
-                    
+
                     if should_show_message {
                         // Get available width for the cloud message
                         let available_width = bottom_bar_layout[2].width as usize;
-                        
+
                         // Create text with URL styling if needed
                         let message_line = if let Some(url_pos) = message.find("https://") {
                             let prefix = &message[0..url_pos];
                             let url = &message[url_pos..];
-                            
+
                             // Determine styles based on dimming state
                             let prefix_style = if should_dim {
                                 Style::default().fg(Color::DarkGray).dim()
                             } else {
                                 Style::default().fg(Color::DarkGray)
                             };
-                            
+
                             let url_style = if should_dim {
                                 Style::default().fg(Color::LightCyan).underlined().dim()
                             } else {
                                 Style::default().fg(Color::LightCyan).underlined()
                             };
-                            
+
                             // In collapsed mode or with limited width, prioritize showing the URL
                             if collapsed_mode || available_width < 30 {
                                 // Show only the URL, completely omit prefix if needed
@@ -1825,21 +1832,27 @@ impl Component for TasksList {
                                             format!("{}/../{}", parts[0], parts[parts.len() - 1])
                                         } else {
                                             // Just truncate
-                                            format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                            format!(
+                                                "{}...",
+                                                &url[..available_width
+                                                    .saturating_sub(3)
+                                                    .min(url.len())]
+                                            )
                                         }
                                     } else {
                                         // For other URLs, just truncate
-                                        format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                        format!(
+                                            "{}...",
+                                            &url[..available_width
+                                                .saturating_sub(3)
+                                                .min(url.len())]
+                                        )
                                     };
-                                    
-                                    Line::from(vec![
-                                        Span::styled(shortened_url, url_style),
-                                    ])
+
+                                    Line::from(vec![Span::styled(shortened_url, url_style)])
                                 } else {
                                     // URL fits, show it all
-                                    Line::from(vec![
-                                        Span::styled(url, url_style),
-                                    ])
+                                    Line::from(vec![Span::styled(url, url_style)])
                                 }
                             } else {
                                 // Normal mode with enough space - try to show prefix and URL
@@ -1853,31 +1866,43 @@ impl Component for TasksList {
                                             format!("{}/../{}", parts[0], parts[parts.len() - 1])
                                         } else {
                                             // Just truncate
-                                            format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                            format!(
+                                                "{}...",
+                                                &url[..available_width
+                                                    .saturating_sub(3)
+                                                    .min(url.len())]
+                                            )
                                         }
                                     } else {
                                         // For other URLs, just truncate
-                                        format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                        format!(
+                                            "{}...",
+                                            &url[..available_width
+                                                .saturating_sub(3)
+                                                .min(url.len())]
+                                        )
                                     };
-                                    
+
                                     // If we still have space for a bit of prefix, show it
-                                    let remaining_space = available_width.saturating_sub(shortened_url.len() + 3);
+                                    let remaining_space =
+                                        available_width.saturating_sub(shortened_url.len() + 3);
                                     if remaining_space > 5 && !prefix.is_empty() {
                                         let shortened_prefix = if prefix.len() > remaining_space {
-                                            format!("{}...", &prefix[..remaining_space.saturating_sub(3)])
+                                            format!(
+                                                "{}...",
+                                                &prefix[..remaining_space.saturating_sub(3)]
+                                            )
                                         } else {
                                             prefix.to_string()
                                         };
-                                        
+
                                         Line::from(vec![
                                             Span::styled(shortened_prefix, prefix_style),
                                             Span::styled(shortened_url, url_style),
                                         ])
                                     } else {
                                         // No space for prefix, just show URL
-                                        Line::from(vec![
-                                            Span::styled(shortened_url, url_style),
-                                        ])
+                                        Line::from(vec![Span::styled(shortened_url, url_style)])
                                     }
                                 } else {
                                     // Enough space for both prefix and URL
@@ -1894,19 +1919,18 @@ impl Component for TasksList {
                             } else {
                                 message.clone()
                             };
-                            
+
                             let message_style = if should_dim {
                                 Style::default().fg(Color::DarkGray).dim()
                             } else {
                                 Style::default().fg(Color::DarkGray)
                             };
-                            
-                            Line::from(vec![
-                                Span::styled(display_message, message_style),
-                            ])
+
+                            Line::from(vec![Span::styled(display_message, message_style)])
                         };
 
-                        let cloud_message_paragraph = Paragraph::new(message_line).alignment(Alignment::Right);
+                        let cloud_message_paragraph =
+                            Paragraph::new(message_line).alignment(Alignment::Right);
                         f.render_widget(cloud_message_paragraph, bottom_bar_layout[2]);
                     }
                 }
@@ -1953,6 +1977,7 @@ impl Component for TasksList {
                             {
                                 let mut terminal_pane_data = &mut self.terminal_pane_data[1];
                                 terminal_pane_data.is_continuous = task.continuous;
+                                terminal_pane_data.is_cache_hit = is_cache_hit(task.status);
 
                                 let mut has_pty = false;
                                 if let Some(pty) = self.pty_instances.get(task_name) {
@@ -1995,6 +2020,7 @@ impl Component for TasksList {
                         if let Some(task) = self.tasks.iter_mut().find(|t| t.name == *task_name) {
                             let mut terminal_pane_data = &mut self.terminal_pane_data[pane_idx];
                             terminal_pane_data.is_continuous = task.continuous;
+                            terminal_pane_data.is_cache_hit = is_cache_hit(task.status);
 
                             let mut has_pty = false;
                             if let Some(pty) = self.pty_instances.get(task_name) {
@@ -2036,6 +2062,7 @@ impl Component for TasksList {
                             {
                                 let mut terminal_pane_data = &mut self.terminal_pane_data[pane_idx];
                                 terminal_pane_data.is_continuous = task.continuous;
+                                terminal_pane_data.is_cache_hit = is_cache_hit(task.status);
 
                                 let mut has_pty = false;
                                 if let Some(pty) = self.pty_instances.get(task_name) {

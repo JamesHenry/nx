@@ -67,7 +67,7 @@ import { shouldStreamOutput } from './utils';
 import chalk = require('chalk');
 import { getTuiTerminalSummaryLifeCycle } from './life-cycles/tui-summary-life-cycle';
 
-const originalStdoutWrite = process.stdout.write;
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 
 async function getTerminalOutputLifeCycle(
   initiatingProject: string,
