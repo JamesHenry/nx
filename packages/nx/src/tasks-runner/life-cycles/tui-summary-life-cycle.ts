@@ -218,6 +218,8 @@ export function getTuiTerminalSummaryLifeCycle({
   };
 
   const printRunManySummary = () => {
+    console.log('');
+
     const lines: string[] = [];
     const failure = totalSuccessfulTasks !== totalTasks;
 
@@ -382,12 +384,12 @@ export function getTuiTerminalSummaryLifeCycle({
 
         lines.push(output.colors.red(failureSummaryRows.join(EOL)));
       }
-
-      // adds some vertical space after the summary to avoid bunching against terminal
-      lines.push('');
-
-      console.log(lines.join(EOL));
     }
+
+    // adds some vertical space after the summary to avoid bunching against terminal
+    lines.push('');
+
+    console.log(lines.join(EOL));
   };
   return { lifeCycle, printSummary };
 }

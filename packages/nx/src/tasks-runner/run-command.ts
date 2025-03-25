@@ -57,6 +57,7 @@ import { LegacyTaskHistoryLifeCycle } from './life-cycles/task-history-life-cycl
 import { TaskProfilingLifeCycle } from './life-cycles/task-profiling-life-cycle';
 import { TaskResultsLifeCycle } from './life-cycles/task-results-life-cycle';
 import { TaskTimingsLifeCycle } from './life-cycles/task-timings-life-cycle';
+import { getTuiTerminalSummaryLifeCycle } from './life-cycles/tui-summary-life-cycle';
 import {
   findCycle,
   makeAcyclic,
@@ -65,7 +66,6 @@ import {
 import { TasksRunner, TaskStatus } from './tasks-runner';
 import { shouldStreamOutput } from './utils';
 import chalk = require('chalk');
-import { getTuiTerminalSummaryLifeCycle } from './life-cycles/tui-summary-life-cycle';
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 const originalStderrWrite = process.stderr.write.bind(process.stderr);
@@ -85,7 +85,38 @@ async function getTerminalOutputLifeCycle(
   delete overridesWithoutHidden['__overrides_unparsed__'];
 
   if (process.env.NX_TUI === 'true') {
+    const createPatchedConsoleMethod = (
+      originalMethod: typeof console.log | typeof console.error
+    ): typeof console.log | typeof console.error => {
+      return (...args: any[]) => {
+        // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
+        const stackTrace = new Error().stack;
+        const isNxCloudLog = stackTrace.includes(
+          join(workspaceRoot, '.nx', 'cache', 'cloud')
+        );
+        if (!isNxCloudLog) {
+          return originalMethod(...args);
+        }
+        // No-op the Nx Cloud client logs
+      };
+    };
+    // The cloud client calls console.log when NX_VERBOSE_LOGGING is set to true
+    console.log = createPatchedConsoleMethod(originalConsoleLog);
+    console.error = createPatchedConsoleMethod(originalConsoleError);
+
+    const patchedWrite = (_chunk, _encoding, callback) => {
+      // Preserve original behavior around callback and return value, just in case
+      if (callback) {
+        callback();
+      }
+      return true;
+    };
+
+    process.stdout.write = patchedWrite as any;
+    process.stderr.write = patchedWrite as any;
+
     const { AppLifeCycle, restoreTerminal } = await import('../native');
+    let appLifeCycle;
 
     const isRunOne = initiatingProject != null;
 
@@ -140,6 +171,11 @@ async function getTerminalOutputLifeCycle(
 
     if (tasks.length === 0) {
       renderIsDone = renderIsDone.then(() => {
+        // Revert the patched methods
+        process.stdout.write = originalStdoutWrite;
+        process.stderr.write = originalStderrWrite;
+        console.log = originalConsoleLog;
+        console.error = originalConsoleError;
         printSummary();
       });
     }
@@ -147,14 +183,14 @@ async function getTerminalOutputLifeCycle(
     const lifeCycles: LifeCycle[] = [tsLifeCycle];
     // Only run the TUI if there are tasks to run
     if (tasks.length > 0) {
-      const lifeCycle = new AppLifeCycle(
+      appLifeCycle = new AppLifeCycle(
         tasks,
         pinnedTasks,
         nxArgs ?? {},
         nxJson.tui ?? {},
         titleText
       );
-      lifeCycles.unshift(lifeCycle);
+      lifeCycles.unshift(appLifeCycle);
 
       /**
        * Patch stdout.write and stderr.write methods to pass Nx Cloud client logs to the TUI via the lifecycle
@@ -169,15 +205,15 @@ async function getTerminalOutputLifeCycle(
           const isNxCloudLog = stackTrace.includes(
             join(workspaceRoot, '.nx', 'cache', 'cloud')
           );
-          if (!isNxCloudLog) {
-            return originalWrite(chunk, encoding, callback);
-          }
-
-          // Do not bother to store logs with only whitespace characters, they aren't relevant for the TUI
-          const trimmedChunk = chunk.toString().trim();
-          if (trimmedChunk.length) {
-            // Remove ANSI escape codes, the TUI will control the formatting
-            lifeCycle.__setCloudMessage(stripVTControlCharacters(trimmedChunk));
+          if (isNxCloudLog) {
+            // Do not bother to store logs with only whitespace characters, they aren't relevant for the TUI
+            const trimmedChunk = chunk.toString().trim();
+            if (trimmedChunk.length) {
+              // Remove ANSI escape codes, the TUI will control the formatting
+              appLifeCycle?.__setCloudMessage(
+                stripVTControlCharacters(trimmedChunk)
+              );
+            }
           }
           // Preserve original behavior around callback and return value, just in case
           if (callback) {
@@ -211,7 +247,7 @@ async function getTerminalOutputLifeCycle(
       console.error = createPatchedConsoleMethod(originalConsoleError);
 
       renderIsDone = new Promise<void>((resolve) => {
-        lifeCycle.__init(() => {
+        appLifeCycle.__init(() => {
           resolve();
         });
       })
