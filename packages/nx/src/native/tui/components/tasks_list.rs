@@ -1058,58 +1058,25 @@ impl Component for TasksList {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(if has_short_viewport {
-                    if self.cloud_message.is_some() {
-                        vec![
-                            Constraint::Fill(1),    // Table gets most space
-                            Constraint::Length(1), // Cloud message area
-                            Constraint::Length(1), // Gap
-                            Constraint::Length(1), // Bottom bar (pagination)
-                        ]
-                    } else {
-                        vec![
-                            Constraint::Fill(1),    // Table gets most space
-                            Constraint::Length(1), // Bottom bar (pagination)
-                        ]
-                    }
+                    vec![
+                        Constraint::Fill(1),   // Table gets most space
+                        Constraint::Length(1), // Bottom bar (pagination)
+                    ]
                 } else if task_list_area.width < 60 {
-                    if self.cloud_message.is_some() {
-                        vec![
-                            Constraint::Fill(1),    // Table gets most space
-                            Constraint::Length(1), // Cloud message area
-                            Constraint::Length(1), // Gap
-                            Constraint::Length(2), // Bottom bar (2 units for stacked layout)
-                        ]
-                    } else {
-                        vec![
-                            Constraint::Fill(1),    // Table gets most space
-                            Constraint::Length(2), // Bottom bar (2 units for stacked layout)
-                        ]
-                    }
+                    vec![
+                        Constraint::Fill(1),   // Table gets most space
+                        Constraint::Length(2), // Bottom bar (2 units for stacked layout)
+                    ]
                 } else {
-                    if self.cloud_message.is_some() {
-                        vec![
-                            Constraint::Fill(1),    // Table gets most space
-                            Constraint::Length(1), // Cloud message area
-                            Constraint::Length(1), // Gap
-                            Constraint::Length(1), // Bottom bar
-                        ]
-                    } else {
-                        vec![
-                            Constraint::Fill(1),    // Table gets most space
-                            Constraint::Length(1), // Bottom bar
-                        ]
-                    }
+                    vec![
+                        Constraint::Fill(1),   // Table gets most space
+                        Constraint::Length(1), // Bottom bar
+                    ]
                 })
                 .split(task_list_area);
 
             let table_area = chunks[0];
-
-            // Set up bottom areas based on cloud message presence
-            let (cloud_message_area, pagination_area) = if self.cloud_message.is_some() {
-                (Some(chunks[1]), chunks[3]) // Cloud message in area 1, pagination in area 3 (after gap)
-            } else {
-                (None, chunks[1]) // No cloud message, pagination in area 1
-            };
+            let pagination_area = chunks[1]; // Bottom bar area - now contains the cloud message rendering
 
             // Reserve space for pagination and borders
             self.recalculate_pages(table_area.height.saturating_sub(4));
@@ -1688,29 +1655,6 @@ impl Component for TasksList {
             f.render_widget(t, table_area);
 
             // Render cloud message in its dedicated area if it exists
-            if let Some(message_area) = cloud_message_area {
-                if let Some(message) = &self.cloud_message {
-                    // Create text with URL styling if needed
-                    let message_line = if let Some(url_pos) = message.find("https://") {
-                        let prefix = &message[0..url_pos];
-                        let url = &message[url_pos..];
-                        Line::from(vec![
-                            Span::raw("  "), // Left padding to align with table content
-                            Span::styled(prefix, Style::default().fg(Color::DarkGray)),
-                            Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
-                        ])
-                    } else {
-                        Line::from(vec![
-                            Span::raw("  "), // Left padding to align with table content
-                            Span::styled(message, Style::default().fg(Color::DarkGray)),
-                        ])
-                    };
-
-                    let cloud_message_paragraph = Paragraph::new(message_line);
-                    f.render_widget(cloud_message_paragraph, message_area);
-                }
-            }
-
             let needs_vertical_bottom_layout = area.width < 90 || has_short_viewport;
 
             // Bottom bar layout
@@ -1747,7 +1691,11 @@ impl Component for TasksList {
             let pagination_width = 20; // Increase width for pagination with arrows
 
             // Create help text component
-            let help_text = HelpText::new(collapsed_mode, should_dim, false); // Never align help text left
+            let help_text = HelpText::new(
+                collapsed_mode || self.cloud_message.is_some(),
+                should_dim,
+                false,
+            ); // Use collapsed mode when cloud message is present
 
             // Always draw pagination
             if needs_vertical_bottom_layout {
@@ -1768,8 +1716,28 @@ impl Component for TasksList {
                     help_text.render(f, bottom_layout[1]);
                 }
             } else {
-                // For horizontal layout, render pagination on left and help text centered in the same area
-                // Create a dedicated area just for pagination on the left with proper alignment
+                // For horizontal layout, create a three-part layout: pagination on left, help text in middle, cloud message on right
+                let has_cloud_message = self.cloud_message.is_some();
+                let bottom_bar_layout = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(if has_cloud_message {
+                        [
+                            Constraint::Length(12), // Width for pagination (with padding)
+                            Constraint::Length(24), // Smaller width for help text when cloud message is present
+                            Constraint::Fill(1),    // Cloud message gets most of the remaining space
+                            Constraint::Length(2),  // Right-side padding for breathing room
+                        ]
+                    } else {
+                        [
+                            Constraint::Length(15), // Width for pagination (with padding)
+                            Constraint::Fill(1),    // Help text gets all remaining space
+                            Constraint::Length(1),  // Minimal width when no cloud message
+                            Constraint::Length(0),  // No right padding needed when no cloud message
+                        ]
+                    })
+                    .split(bottom_layout[0]);
+
+                // Render pagination in its area
                 let pagination_area = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
@@ -1777,14 +1745,116 @@ impl Component for TasksList {
                         Constraint::Length(10), // Width for pagination
                         Constraint::Fill(1),    // Remaining space
                     ])
-                    .split(bottom_layout[0])[1];
+                    .split(bottom_bar_layout[0])[1];
 
                 pagination.render(f, pagination_area, should_dim);
 
                 // Only show help text if not dimmed
                 if !self.is_dimmed {
-                    // Let the help text use the full width for proper centering
-                    help_text.render(f, bottom_layout[0]);
+                    // Let the help text use its dedicated area
+                    help_text.render(f, bottom_bar_layout[1]);
+                }
+
+                // Render cloud message if it exists
+                if let Some(message) = &self.cloud_message {
+                    // Get available width for the cloud message
+                    let available_width = bottom_bar_layout[2].width as usize;
+                    
+                    // Create text with URL styling if needed
+                    let message_line = if let Some(url_pos) = message.find("https://") {
+                        let prefix = &message[0..url_pos];
+                        let url = &message[url_pos..];
+                        
+                        // In collapsed mode or with limited width, prioritize showing the URL
+                        if collapsed_mode || available_width < 30 {
+                            // Show only the URL, completely omit prefix if needed
+                            if url.len() > available_width.saturating_sub(3) {
+                                // URL is too long, we need to truncate it
+                                let shortened_url = if url.contains("nx.app") {
+                                    // For nx.app links, try to preserve the run ID at the end
+                                    let parts: Vec<&str> = url.split('/').collect();
+                                    if parts.len() > 4 {
+                                        // Try to show the domain and run ID
+                                        format!("{}/../{}", parts[0], parts[parts.len() - 1])
+                                    } else {
+                                        // Just truncate
+                                        format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                    }
+                                } else {
+                                    // For other URLs, just truncate
+                                    format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                };
+                                
+                                Line::from(vec![
+                                    Span::styled(shortened_url, Style::default().fg(Color::LightCyan).underlined()),
+                                ])
+                            } else {
+                                // URL fits, show it all
+                                Line::from(vec![
+                                    Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
+                                ])
+                            }
+                        } else {
+                            // Normal mode with enough space - try to show prefix and URL
+                            if prefix.len() + url.len() > available_width.saturating_sub(3) {
+                                // Not enough space for both, prioritize URL
+                                let shortened_url = if url.contains("nx.app") {
+                                    // For nx.app links, try to preserve the run ID at the end
+                                    let parts: Vec<&str> = url.split('/').collect();
+                                    if parts.len() > 4 {
+                                        // Try to show the domain and run ID
+                                        format!("{}/../{}", parts[0], parts[parts.len() - 1])
+                                    } else {
+                                        // Just truncate
+                                        format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                    }
+                                } else {
+                                    // For other URLs, just truncate
+                                    format!("{}...", &url[..available_width.saturating_sub(3).min(url.len())])
+                                };
+                                
+                                // If we still have space for a bit of prefix, show it
+                                let remaining_space = available_width.saturating_sub(shortened_url.len() + 3);
+                                if remaining_space > 5 && !prefix.is_empty() {
+                                    let shortened_prefix = if prefix.len() > remaining_space {
+                                        format!("{}...", &prefix[..remaining_space.saturating_sub(3)])
+                                    } else {
+                                        prefix.to_string()
+                                    };
+                                    
+                                    Line::from(vec![
+                                        Span::styled(shortened_prefix, Style::default().fg(Color::DarkGray)),
+                                        Span::styled(shortened_url, Style::default().fg(Color::LightCyan).underlined()),
+                                    ])
+                                } else {
+                                    // No space for prefix, just show URL
+                                    Line::from(vec![
+                                        Span::styled(shortened_url, Style::default().fg(Color::LightCyan).underlined()),
+                                    ])
+                                }
+                            } else {
+                                // Enough space for both prefix and URL
+                                Line::from(vec![
+                                    Span::styled(prefix, Style::default().fg(Color::DarkGray)),
+                                    Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
+                                ])
+                            }
+                        }
+                    } else {
+                        // Handle non-URL messages
+                        let display_message = if message.len() > available_width {
+                            format!("{}...", &message[..available_width.saturating_sub(3)])
+                        } else {
+                            message.clone()
+                        };
+                        
+                        Line::from(vec![
+                            Span::styled(display_message, Style::default().fg(Color::DarkGray)),
+                        ])
+                    };
+
+                    let cloud_message_paragraph = Paragraph::new(message_line).alignment(Alignment::Right);
+                    f.render_widget(cloud_message_paragraph, bottom_bar_layout[2]);
                 }
             }
         }
