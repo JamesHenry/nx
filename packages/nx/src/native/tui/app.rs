@@ -383,53 +383,31 @@ impl App {
                         _ => {
                             // Handle spacebar toggle regardless of focus
                             if key.code == KeyCode::Char(' ') {
-                                if let Some(tasks_list) = self
-                                    .components
-                                    .iter_mut()
-                                    .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-                                {
-                                    tasks_list.toggle_output_visibility();
-                                }
+                                tasks_list.toggle_output_visibility();
                                 return Ok(false); // Skip other key handling
                             }
 
+                            let is_filter_mode = tasks_list.filter_mode;
+
                             match self.focus {
                                 Focus::TaskList => match key.code {
-                                    KeyCode::Down | KeyCode::Char('j') => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.next();
-                                        }
+                                    KeyCode::Char('j') if !is_filter_mode => {
+                                        tasks_list.next();
                                     }
-                                    KeyCode::Up | KeyCode::Char('k') => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.previous();
-                                        }
+                                    KeyCode::Down => {
+                                        tasks_list.next();
+                                    }
+                                    KeyCode::Char('k') if !is_filter_mode => {
+                                        tasks_list.previous();
+                                    }
+                                    KeyCode::Up => {
+                                        tasks_list.previous();
                                     }
                                     KeyCode::Left => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.previous_page();
-                                        }
+                                        tasks_list.previous_page();
                                     }
                                     KeyCode::Right => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.next_page();
-                                        }
+                                        tasks_list.next_page();
                                     }
                                     KeyCode::Esc => {
                                         if matches!(self.focus, Focus::HelpPopup) {
@@ -443,13 +421,8 @@ impl App {
                                             self.focus = self.previous_focus;
                                         } else {
                                             // Only clear filter when help popup is not in focus
-                                            if let Some(tasks_list) =
-                                                self.components.iter_mut().find_map(|c| {
-                                                    c.as_any_mut().downcast_mut::<TasksList>()
-                                                })
-                                            {
-                                                tasks_list.clear_filter();
-                                            }
+
+                                            tasks_list.clear_filter();
                                         }
                                     }
                                     KeyCode::Char(c) => {
@@ -490,62 +463,32 @@ impl App {
                                         }
                                     }
                                     KeyCode::Backspace => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.filter_mode {
-                                                tasks_list.remove_filter_char();
-                                            }
+                                        if tasks_list.filter_mode {
+                                            tasks_list.remove_filter_char();
                                         }
                                     }
                                     KeyCode::Tab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.has_visible_panes() {
-                                                tasks_list.focus_next();
-                                                self.focus = tasks_list.get_focus();
-                                            }
+                                        if tasks_list.has_visible_panes() {
+                                            tasks_list.focus_next();
+                                            self.focus = tasks_list.get_focus();
                                         }
                                     }
                                     KeyCode::BackTab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.has_visible_panes() {
-                                                tasks_list.focus_previous();
-                                                self.focus = tasks_list.get_focus();
-                                            }
+                                        if tasks_list.has_visible_panes() {
+                                            tasks_list.focus_previous();
+                                            self.focus = tasks_list.get_focus();
                                         }
                                     }
                                     _ => {}
                                 },
                                 Focus::MultipleOutput(_idx) => match key.code {
                                     KeyCode::Tab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.focus_next();
-                                            self.focus = tasks_list.get_focus();
-                                        }
+                                        tasks_list.focus_next();
+                                        self.focus = tasks_list.get_focus();
                                     }
                                     KeyCode::BackTab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.focus_previous();
-                                            self.focus = tasks_list.get_focus();
-                                        }
+                                        tasks_list.focus_previous();
+                                        self.focus = tasks_list.get_focus();
                                     }
                                     _ => {}
                                 },
