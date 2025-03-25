@@ -873,63 +873,33 @@ impl TasksList {
             Color::Cyan
         };
 
-        // Show filter input when in filter mode
-        if self.filter_mode || !self.filter_text.is_empty() {
-            let filter_text = format!("Filter: {}", self.filter_text);
-            let filter_style = Style::default().fg(Color::Yellow);
+        // Show running tasks status (no longer showing filter in header)
+        let (running, remaining) = self.get_task_counts();
 
-            if collapsed_mode {
-                vec![
-                    // First column is for NX logo and title now
-                    Cell::from("").style(status_style),
-                    Cell::from(filter_text).style(filter_style),
-                ]
-            } else {
-                vec![
-                    // First column is for NX logo and title now
-                    Cell::from("").style(status_style),
-                    Cell::from(filter_text).style(filter_style),
-                    Cell::from(Line::from("Cache").right_aligned()).style(
-                        Style::default()
-                            .fg(header_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(Line::from("Duration").right_aligned()).style(
-                        Style::default()
-                            .fg(header_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]
-            }
+        // Leave first cell empty for the logo
+        let status_cell = Cell::from("").style(status_style);
+
+        // Completion status text is now shown with the logo in the first cell
+        // Just provide an empty second cell
+        let status_text = String::new();
+
+        if collapsed_mode {
+            vec![status_cell, Cell::from(status_text)]
         } else {
-            // Show running tasks status
-            let (running, remaining) = self.get_task_counts();
-
-            // Leave first cell empty for the logo
-            let status_cell = Cell::from("").style(status_style);
-
-            // Completion status text is now shown with the logo in the first cell
-            // Just provide an empty second cell
-            let status_text = String::new();
-
-            if collapsed_mode {
-                vec![status_cell, Cell::from(status_text)]
-            } else {
-                vec![
-                    status_cell,
-                    Cell::from(status_text),
-                    Cell::from(Line::from("Cache").right_aligned()).style(
-                        Style::default()
-                            .fg(header_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(Line::from("Duration").right_aligned()).style(
-                        Style::default()
-                            .fg(header_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]
-            }
+            vec![
+                status_cell,
+                Cell::from(status_text),
+                Cell::from(Line::from("Cache").right_aligned()).style(
+                    Style::default()
+                        .fg(header_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Cell::from(Line::from("Duration").right_aligned()).style(
+                    Style::default()
+                        .fg(header_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]
         }
     }
 
@@ -1092,23 +1062,27 @@ impl Component for TasksList {
                 .constraints(if has_short_viewport {
                     vec![
                         Constraint::Fill(1),   // Table gets most space
+                        Constraint::Length(2), // Filter display (when active) - INCREASED TO 2 FOR BOTH LINES
                         Constraint::Length(1), // Bottom bar (pagination)
                     ]
                 } else if task_list_area.width < 60 {
                     vec![
                         Constraint::Fill(1),   // Table gets most space
+                        Constraint::Length(2), // Filter display (when active) - INCREASED TO 2 FOR BOTH LINES
                         Constraint::Length(2), // Bottom bar (2 units for stacked layout)
                     ]
                 } else {
                     vec![
                         Constraint::Fill(1),   // Table gets most space
+                        Constraint::Length(2), // Filter display (when active) - INCREASED TO 2 FOR BOTH LINES
                         Constraint::Length(1), // Bottom bar
                     ]
                 })
                 .split(task_list_area);
 
             let table_area = chunks[0];
-            let pagination_area = chunks[1]; // Bottom bar area - now contains the cloud message rendering
+            let filter_area = chunks[1];
+            let pagination_area = chunks[2]; // Bottom bar area - now contains the cloud message rendering
 
             // Reserve space for pagination and borders
             self.recalculate_pages(table_area.height.saturating_sub(4));
@@ -1299,72 +1273,6 @@ impl Component for TasksList {
                 } else {
                     vec![
                         Cell::from("   "), // Just spaces for indentation, no vertical line
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                    ]
-                };
-                all_rows.push(Row::new(empty_cells).height(1).style(normal_style));
-            }
-
-            // Add filter summary row if filtering or there are filtered tasks
-            let hidden_tasks = self.tasks.len() - self.filtered_names.len();
-            if self.filter_mode || !self.filter_text.is_empty() {
-                let filter_cells = if collapsed_mode {
-                    vec![
-                        Cell::from(""),
-                        Cell::from(if hidden_tasks > 0 {
-                            if self.filter_persisted {
-                                format!(
-                                    "{} tasks filtered out. Press / to edit, <esc> to clear",
-                                    hidden_tasks
-                                )
-                            } else {
-                                format!(
-                                    "{} tasks filtered out. Press / to persist, <esc> to clear",
-                                    hidden_tasks
-                                )
-                            }
-                        } else if self.filter_persisted {
-                            "Press / to edit filter".to_string()
-                        } else {
-                            "Press <esc> to clear filter".to_string()
-                        })
-                        .style(Style::default().fg(Color::Yellow)),
-                    ]
-                } else {
-                    vec![
-                        Cell::from(""),
-                        Cell::from(if hidden_tasks > 0 {
-                            if self.filter_persisted {
-                                format!(
-                                    "{} tasks filtered out. Press / to edit, <esc> to clear",
-                                    hidden_tasks
-                                )
-                            } else {
-                                format!(
-                                    "{} tasks filtered out. Press / to persist, <esc> to clear",
-                                    hidden_tasks
-                                )
-                            }
-                        } else if self.filter_persisted {
-                            "Press / to edit filter".to_string()
-                        } else {
-                            "Press <esc> to clear filter".to_string()
-                        })
-                        .style(Style::default().fg(Color::Yellow)),
-                        Cell::from(""),
-                        Cell::from(""),
-                    ]
-                };
-                all_rows.push(Row::new(filter_cells).height(1));
-
-                // Add empty row after filter summary
-                let empty_cells = if collapsed_mode {
-                    vec![Cell::from(""), Cell::from("")]
-                } else {
-                    vec![
-                        Cell::from(""),
                         Cell::from(""),
                         Cell::from(""),
                         Cell::from(""),
@@ -1685,6 +1593,55 @@ impl Component for TasksList {
                 .style(self.get_table_style());
 
             f.render_widget(t, table_area);
+
+            // After rendering the table, render the filter text if active
+            if self.filter_mode || !self.filter_text.is_empty() {
+                let hidden_tasks = self.tasks.len() - self.filtered_names.len();
+
+                // Render exactly as it was before, just at the bottom
+                // Add proper indentation to align with task content - 4 spaces matches the task indentation
+                let filter_text = format!("  Filter: {}", self.filter_text);
+
+                // Determine if filter text should be dimmed based on focus
+                let should_dim = matches!(
+                    self.focus,
+                    Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup
+                );
+
+                let filter_style = if should_dim {
+                    Style::default().fg(Color::Yellow).dim()
+                } else {
+                    Style::default().fg(Color::Yellow)
+                };
+
+                let instruction_text = if hidden_tasks > 0 {
+                    if self.filter_persisted {
+                        format!(
+                            "  {} tasks filtered out. Press / to edit, <esc> to clear",
+                            hidden_tasks
+                        )
+                    } else {
+                        format!(
+                            "  {} tasks filtered out. Press / to persist, <esc> to clear",
+                            hidden_tasks
+                        )
+                    }
+                } else if self.filter_persisted {
+                    "    Press / to edit filter".to_string()
+                } else {
+                    "  Press <esc> to clear filter".to_string()
+                };
+
+                // Render the full filter information exactly as it was before
+                let filter_lines = vec![
+                    Line::from(vec![Span::styled(filter_text, filter_style)]),
+                    Line::from(vec![Span::styled(instruction_text, filter_style)]),
+                ];
+
+                let filter_paragraph = Paragraph::new(filter_lines).alignment(Alignment::Left);
+
+                f.render_widget(filter_paragraph, filter_area);
+            }
 
             // Render cloud message in its dedicated area if it exists
             let needs_vertical_bottom_layout = area.width < 90 || has_short_viewport;
