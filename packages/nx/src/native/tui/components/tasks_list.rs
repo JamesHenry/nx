@@ -1678,7 +1678,7 @@ impl Component for TasksList {
             };
 
             // Determine if bottom bar elements should be dimmed
-            let should_dim = matches!(self.focus, Focus::MultipleOutput(_));
+            let should_dim = matches!(self.focus, Focus::MultipleOutput(_) | Focus::HelpPopup | Focus::CountdownPopup);
 
             // Get pagination info
             let total_pages = self.selection_manager.total_pages();
@@ -1765,6 +1765,19 @@ impl Component for TasksList {
                         let prefix = &message[0..url_pos];
                         let url = &message[url_pos..];
                         
+                        // Determine styles based on dimming state
+                        let prefix_style = if should_dim {
+                            Style::default().fg(Color::DarkGray).dim()
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        
+                        let url_style = if should_dim {
+                            Style::default().fg(Color::LightCyan).underlined().dim()
+                        } else {
+                            Style::default().fg(Color::LightCyan).underlined()
+                        };
+                        
                         // In collapsed mode or with limited width, prioritize showing the URL
                         if collapsed_mode || available_width < 30 {
                             // Show only the URL, completely omit prefix if needed
@@ -1786,12 +1799,12 @@ impl Component for TasksList {
                                 };
                                 
                                 Line::from(vec![
-                                    Span::styled(shortened_url, Style::default().fg(Color::LightCyan).underlined()),
+                                    Span::styled(shortened_url, url_style),
                                 ])
                             } else {
                                 // URL fits, show it all
                                 Line::from(vec![
-                                    Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
+                                    Span::styled(url, url_style),
                                 ])
                             }
                         } else {
@@ -1823,20 +1836,20 @@ impl Component for TasksList {
                                     };
                                     
                                     Line::from(vec![
-                                        Span::styled(shortened_prefix, Style::default().fg(Color::DarkGray)),
-                                        Span::styled(shortened_url, Style::default().fg(Color::LightCyan).underlined()),
+                                        Span::styled(shortened_prefix, prefix_style),
+                                        Span::styled(shortened_url, url_style),
                                     ])
                                 } else {
                                     // No space for prefix, just show URL
                                     Line::from(vec![
-                                        Span::styled(shortened_url, Style::default().fg(Color::LightCyan).underlined()),
+                                        Span::styled(shortened_url, url_style),
                                     ])
                                 }
                             } else {
                                 // Enough space for both prefix and URL
                                 Line::from(vec![
-                                    Span::styled(prefix, Style::default().fg(Color::DarkGray)),
-                                    Span::styled(url, Style::default().fg(Color::LightCyan).underlined()),
+                                    Span::styled(prefix, prefix_style),
+                                    Span::styled(url, url_style),
                                 ])
                             }
                         }
@@ -1848,8 +1861,14 @@ impl Component for TasksList {
                             message.clone()
                         };
                         
+                        let message_style = if should_dim {
+                            Style::default().fg(Color::DarkGray).dim()
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        
                         Line::from(vec![
-                            Span::styled(display_message, Style::default().fg(Color::DarkGray)),
+                            Span::styled(display_message, message_style),
                         ])
                     };
 
