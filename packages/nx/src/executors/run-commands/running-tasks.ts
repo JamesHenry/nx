@@ -13,7 +13,6 @@ import {
   loadAndExpandDotEnvFile,
   unloadDotEnvFile,
 } from '../../tasks-runner/task-env';
-import { TUI_ENABLED } from '../../tasks-runner/tui-enabled';
 import {
   LARGE_BUFFER,
   NormalizedRunCommandsOptions,
@@ -28,7 +27,11 @@ export class ParallelRunningTasks implements RunningTask {
   private exitCallbacks: Array<(code: number, terminalOutput: string) => void> =
     [];
 
-  constructor(options: NormalizedRunCommandsOptions, context: ExecutorContext) {
+  constructor(
+    options: NormalizedRunCommandsOptions,
+    context: ExecutorContext,
+    private readonly tuiEnabled: boolean
+  ) {
     this.childProcesses = options.commands.map(
       (commandConfig) =>
         new RunningNodeProcess(
@@ -160,6 +163,7 @@ export class SeriallyRunningTasks implements RunningTask {
   constructor(
     options: NormalizedRunCommandsOptions,
     context: ExecutorContext,
+    private readonly tuiEnabled: boolean,
     private pseudoTerminal?: PseudoTerminal
   ) {
     this.run(options, context)
@@ -257,6 +261,7 @@ export class SeriallyRunningTasks implements RunningTask {
         env,
         streamOutput,
         tty,
+        this.tuiEnabled,
         envFile
       );
     }
@@ -390,7 +395,8 @@ class RunningNodeProcess implements RunningTask {
 export function runSingleCommandWithPseudoTerminal(
   normalized: NormalizedRunCommandsOptions,
   context: ExecutorContext,
-  pseudoTerminal: PseudoTerminal
+  pseudoTerminal: PseudoTerminal,
+  prependCommandToOutput: boolean
 ) {
   return createProcessWithPseudoTty(
     pseudoTerminal,
@@ -400,6 +406,7 @@ export function runSingleCommandWithPseudoTerminal(
     normalized.env,
     normalized.streamOutput,
     pseudoTerminal ? normalized.isTTY : false,
+    prependCommandToOutput,
     normalized.envFile
   );
 }
@@ -412,6 +419,7 @@ async function createProcessWithPseudoTty(
   env: Record<string, string>,
   streamOutput: boolean = true,
   tty: boolean,
+  prependCommandToOutput: boolean,
   envFile?: string
 ) {
   return pseudoTerminal.runCommand(commandConfig.command, {
@@ -419,7 +427,7 @@ async function createProcessWithPseudoTty(
     jsEnv: processEnv(color, cwd, env, envFile),
     quiet: !streamOutput,
     tty,
-    prependCommandToOutput: TUI_ENABLED,
+    prependCommandToOutput,
   });
 }
 

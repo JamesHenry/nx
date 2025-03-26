@@ -1,13 +1,34 @@
 import { defaultMaxListeners } from 'events';
-import { performance } from 'perf_hooks';
-import { relative } from 'path';
 import { writeFileSync } from 'fs';
-import { TaskHasher } from '../hasher/task-hasher';
+import { relative } from 'path';
+import { performance } from 'perf_hooks';
+import { NxJsonConfiguration } from '../config/nx-json';
+import { ProjectGraph } from '../config/project-graph';
+import { Task, TaskGraph } from '../config/task-graph';
+import { DaemonClient } from '../daemon/client/client';
 import { runCommands } from '../executors/run-commands/run-commands.impl';
-import { ForkedProcessTaskRunner } from './forked-process-task-runner';
+import { getTaskDetails, hashTask } from '../hasher/hash-task';
+import { TaskHasher } from '../hasher/task-hasher';
+import { TaskDetails } from '../native';
+import { NxArgs } from '../utils/command-line-utils';
+import { output } from '../utils/output';
+import { combineOptionsForExecutor } from '../utils/params';
+import { workspaceRoot } from '../utils/workspace-root';
 import { Cache, DbCache, getCache } from './cache';
 import { DefaultTasksRunnerOptions } from './default-tasks-runner';
+import { ForkedProcessTaskRunner } from './forked-process-task-runner';
+import { isTuiEnabled } from './is-tui-enabled';
+import { TaskMetadata } from './life-cycle';
+import { PseudoTtyProcess } from './pseudo-terminal';
+import { NoopChildProcess } from './running-tasks/noop-child-process';
+import { RunningTask } from './running-tasks/running-task';
+import {
+  getEnvVariablesForBatchProcess,
+  getEnvVariablesForTask,
+  getTaskSpecificEnv,
+} from './task-env';
 import { TaskStatus } from './tasks-runner';
+import { Batch, TasksSchedule } from './tasks-schedule';
 import {
   calculateReverseDeps,
   getExecutorForTask,
@@ -17,32 +38,15 @@ import {
   removeTasksFromTaskGraph,
   shouldStreamOutput,
 } from './utils';
-import { Batch, TasksSchedule } from './tasks-schedule';
-import { TaskMetadata } from './life-cycle';
-import { ProjectGraph } from '../config/project-graph';
-import { Task, TaskGraph } from '../config/task-graph';
-import { DaemonClient } from '../daemon/client/client';
-import { getTaskDetails, hashTask } from '../hasher/hash-task';
-import {
-  getEnvVariablesForBatchProcess,
-  getEnvVariablesForTask,
-  getTaskSpecificEnv,
-} from './task-env';
-import { workspaceRoot } from '../utils/workspace-root';
-import { output } from '../utils/output';
-import { combineOptionsForExecutor } from '../utils/params';
-import { NxJsonConfiguration } from '../config/nx-json';
-import { AppLifeCycle, TaskDetails } from '../native';
-import { NoopChildProcess } from './running-tasks/noop-child-process';
-import { RunningTask } from './running-tasks/running-task';
-import { NxArgs } from '../utils/command-line-utils';
-import { PseudoTtyProcess } from './pseudo-terminal';
-import { TUI_ENABLED } from './tui-enabled';
 
 export class TaskOrchestrator {
   private taskDetails: TaskDetails | null = getTaskDetails();
   private cache: DbCache | Cache = getCache(this.options);
-  private forkedProcessTaskRunner = new ForkedProcessTaskRunner(this.options);
+  private readonly tuiEnabled = isTuiEnabled(this.nxJson);
+  private forkedProcessTaskRunner = new ForkedProcessTaskRunner(
+    this.options,
+    this.tuiEnabled
+  );
 
   private tasksSchedule = new TasksSchedule(
     this.projectGraph,
@@ -481,7 +485,7 @@ export class TaskOrchestrator {
           ...combinedOptions,
           env,
           usePty:
-            TUI_ENABLED ||
+            this.tuiEnabled ||
             (!this.tasksSchedule.hasTasks() &&
               this.runningContinuousTasks.size === 0),
           streamOutput,
@@ -491,7 +495,7 @@ export class TaskOrchestrator {
           root: workspaceRoot, // only root is needed in runCommands
         } as any);
 
-        if (TUI_ENABLED && runningTask instanceof PseudoTtyProcess) {
+        if (this.tuiEnabled && runningTask instanceof PseudoTtyProcess) {
           // This is an external of a the pseudo terminal where a task is running and can be passed to the TUI
           this.options.lifeCycle.registerRunningTask(
             task.id,
@@ -556,7 +560,7 @@ export class TaskOrchestrator {
         streamOutput
       );
 
-      if (TUI_ENABLED && runningTask instanceof PseudoTtyProcess) {
+      if (this.tuiEnabled && runningTask instanceof PseudoTtyProcess) {
         // This is an external of a the pseudo terminal where a task is running and can be passed to the TUI
         this.options.lifeCycle.registerRunningTask(
           task.id,
@@ -580,7 +584,7 @@ export class TaskOrchestrator {
 
       // Disable the pseudo terminal if this is a run-many or when running a continuous task as part of a run-one
       const disablePseudoTerminal =
-        !TUI_ENABLED && (!this.initiatingProject || task.continuous);
+        !this.tuiEnabled && (!this.initiatingProject || task.continuous);
       // execution
       const childProcess = usePtyFork
         ? await this.forkedProcessTaskRunner.forkProcess(task, {

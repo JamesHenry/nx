@@ -1,11 +1,12 @@
-import { serializeTarget } from '../../utils/serialize-target';
 import { Task } from '../../config/task-graph';
-import { output } from '../../utils/output';
 import {
   getHistoryForHashes,
   TaskRun,
-  writeTaskRunsToHistory as writeTaskRunsToHistory,
+  writeTaskRunsToHistory,
 } from '../../utils/legacy-task-history';
+import { output } from '../../utils/output';
+import { serializeTarget } from '../../utils/serialize-target';
+import { isTuiEnabled } from '../is-tui-enabled';
 import { LifeCycle, TaskResult } from '../life-cycle';
 
 export class LegacyTaskHistoryLifeCycle implements LifeCycle {
@@ -55,7 +56,7 @@ export class LegacyTaskHistoryLifeCycle implements LifeCycle {
       }
     }
     // Do not directly print output when using the TUI
-    if (process.env.NX_TUI === 'true') {
+    if (isTuiEnabled()) {
       return;
     }
     if (flakyTasks.length > 0) {

@@ -21,6 +21,7 @@ pub struct TerminalPaneData {
     pub pty: Option<Arc<PtyInstance>>,
     pub is_interactive: bool,
     pub is_continuous: bool,
+    pub is_cache_hit: bool,
 }
 
 impl TerminalPaneData {
@@ -29,6 +30,7 @@ impl TerminalPaneData {
             pty: None,
             is_interactive: false,
             is_continuous: false,
+            is_cache_hit: false,
         }
     }
 
@@ -89,14 +91,16 @@ impl TerminalPaneData {
                     }
                     return Ok(());
                 }
-                // Handle 'i' to enter interactive mode for continuous tasks
-                KeyCode::Char('i') if !self.is_interactive => {
+                // Handle 'i' to enter interactive mode for non cache hit tasks
+                KeyCode::Char('i') if !self.is_cache_hit && !self.is_interactive => {
                     self.set_interactive(true);
                     return Ok(());
                 }
                 // Handle Ctrl+Z to exit interactive mode
                 KeyCode::Char('z')
-                    if key.modifiers == KeyModifiers::CONTROL && self.is_interactive =>
+                    if key.modifiers == KeyModifiers::CONTROL
+                        && !self.is_cache_hit
+                        && self.is_interactive =>
                 {
                     self.set_interactive(false);
                     return Ok(());
@@ -200,13 +204,13 @@ impl<'a> TerminalPane<'a> {
                     .add_modifier(Modifier::BOLD),
             ),
             TaskStatus::LocalCacheKeptExisting | TaskStatus::LocalCache => Span::styled(
-                "  ⚡ ",
+                "  ◼ ",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
             TaskStatus::RemoteCache => Span::styled(
-                "  ⚡▼  ",
+                "  ▼  ",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -380,8 +384,8 @@ impl<'a> StatefulWidget for TerminalPane<'a> {
                         scrollbar.render(area, buf, &mut state.scrollbar_state);
                     }
 
-                    // Show interactive/readonly status for focused tasks
-                    if state.is_focused {
+                    // Show interactive/readonly status for focused, non-cache hit, tasks
+                    if state.is_focused && !pty_data.is_cache_hit {
                         // Bottom right status
                         let bottom_text = if self.is_currently_interactive() {
                             Line::from(vec![
