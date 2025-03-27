@@ -40,8 +40,8 @@ const CACHE_STATUS_NOT_YET_KNOWN: &str = "...";
 const CACHE_STATUS_NOT_APPLICABLE: &str = "-";
 const DURATION_NOT_YET_KNOWN: &str = "...";
 
-// TODO: Pass through the actual parallel value used for the run
-const MAX_PARALLEL: usize = 3;
+// This is just a fallback value, the real value will be set via start_command on the lifecycle
+const DEFAULT_MAX_PARALLEL: usize = 3;
 
 /// Represents an individual task with its current state and execution details.
 pub struct TaskItem {
@@ -222,11 +222,15 @@ impl TasksList {
             terminal_pane_data: [main_terminal_pane_data, TerminalPaneData::new()],
             task_list_hidden: false,
             cloud_message: None,
-            max_parallel: MAX_PARALLEL,
+            max_parallel: DEFAULT_MAX_PARALLEL,
             title_text,
             resize_debounce_timer: None,
             pending_resize: None,
         }
+    }
+
+    pub fn set_max_parallel(&mut self, max_parallel: Option<u32>) {
+        self.max_parallel = max_parallel.unwrap_or(DEFAULT_MAX_PARALLEL as u32) as usize;
     }
 
     /// Moves the selection to the next task in the list.
@@ -303,16 +307,16 @@ impl TasksList {
 
         // Only show the parallel section if there are tasks in progress or pending
         if has_tasks_to_run {
-            // Create a fixed section for in-progress tasks (MAX_PARALLEL slots)
+            // Create a fixed section for in-progress tasks (self.max_parallel slots)
             // Add actual in-progress tasks
             entries.extend(in_progress.iter().map(|name| Some(name.clone())));
 
-            // Fill remaining slots with None up to MAX_PARALLEL
+            // Fill remaining slots with None up to self.max_parallel
             let in_progress_count = in_progress.len();
-            if in_progress_count < MAX_PARALLEL {
-                // When we have fewer InProgress tasks than MAX_PARALLEL, fill the remaining slots
+            if in_progress_count < self.max_parallel {
+                // When we have fewer InProgress tasks than self.max_parallel, fill the remaining slots
                 // with empty placeholder rows to maintain the fixed height
-                entries.extend(std::iter::repeat(None).take(MAX_PARALLEL - in_progress_count));
+                entries.extend(std::iter::repeat(None).take(self.max_parallel - in_progress_count));
             }
 
             // Always add a separator after the parallel tasks section with a bottom cap
@@ -2281,7 +2285,7 @@ impl Default for TasksList {
             terminal_pane_data: [TerminalPaneData::default(), TerminalPaneData::default()],
             task_list_hidden: false,
             cloud_message: None,
-            max_parallel: MAX_PARALLEL,
+            max_parallel: DEFAULT_MAX_PARALLEL,
             title_text: String::new(),
             resize_debounce_timer: None,
             pending_resize: None,

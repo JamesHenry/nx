@@ -188,6 +188,14 @@ impl AppLifeCycle {
     }
 
     #[napi]
+    pub fn start_command(&mut self, thread_count: Option<u32>) -> napi::Result<()> {
+        if let Ok(mut app) = self.app.lock() {
+            app.start_command(thread_count);
+        }
+        Ok(())
+    }
+
+    #[napi]
     pub fn schedule_task(&mut self, _task: Task) -> napi::Result<()> {
         // Always intentional noop
         Ok(())

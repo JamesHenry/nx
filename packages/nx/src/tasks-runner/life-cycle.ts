@@ -34,7 +34,7 @@ interface RustRunningTask extends RunningTask {
 }
 
 export interface LifeCycle {
-  startCommand?(): void | Promise<void>;
+  startCommand?(parallel?: number): void | Promise<void>;
 
   endCommand?(): void | Promise<void>;
 
@@ -76,10 +76,10 @@ export interface LifeCycle {
 export class CompositeLifeCycle implements LifeCycle {
   constructor(private readonly lifeCycles: LifeCycle[]) {}
 
-  async startCommand(): Promise<void> {
+  async startCommand(parallel?: number): Promise<void> {
     for (let l of this.lifeCycles) {
       if (l.startCommand) {
-        await l.startCommand();
+        await l.startCommand(parallel);
       }
     }
   }

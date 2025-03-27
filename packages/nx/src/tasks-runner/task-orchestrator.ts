@@ -86,6 +86,7 @@ export class TaskOrchestrator {
     private readonly taskGraph: TaskGraph,
     private readonly nxJson: NxJsonConfiguration,
     private readonly options: NxArgs & DefaultTasksRunnerOptions,
+    private readonly threadCount: number,
     private readonly bail: boolean,
     private readonly daemon: DaemonClient,
     private readonly outputStyle: string
@@ -104,17 +105,13 @@ export class TaskOrchestrator {
 
     performance.mark('task-execution:start');
 
-    const threadCount =
-      this.options.parallel +
-      Object.values(this.taskGraph.tasks).filter((t) => t.continuous).length;
-
     const threads = [];
 
-    process.stdout.setMaxListeners(threadCount + defaultMaxListeners);
-    process.stderr.setMaxListeners(threadCount + defaultMaxListeners);
+    process.stdout.setMaxListeners(this.threadCount + defaultMaxListeners);
+    process.stderr.setMaxListeners(this.threadCount + defaultMaxListeners);
 
     // initial seeding of the queue
-    for (let i = 0; i < threadCount; ++i) {
+    for (let i = 0; i < this.threadCount; ++i) {
       threads.push(this.executeNextBatchOfTasksUsingTaskSchedule());
     }
     await Promise.all(threads);

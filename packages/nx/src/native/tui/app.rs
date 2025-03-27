@@ -83,6 +83,16 @@ impl App {
         })
     }
 
+    pub fn start_command(&mut self, thread_count: Option<u32>) {
+        if let Some(tasks_list) = self
+            .components
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
+        {
+            tasks_list.set_max_parallel(thread_count);
+        }
+    }
+
     pub fn start_tasks(&mut self, tasks: Vec<Task>) {
         if let Some(tasks_list) = self
             .components
