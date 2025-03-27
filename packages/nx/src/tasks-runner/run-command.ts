@@ -143,7 +143,7 @@ async function getTerminalOutputLifeCycle(
       const [project, target] = mainTaskId.split(':');
       titleText = `${target} ${project}`;
       if (tasks.length > 1) {
-        titleText += `, and ${tasks.length - 1} requisite ${taskText})`;
+        titleText += `, and ${tasks.length - 1} requisite ${taskText}`;
       }
     } else {
       titleText =
