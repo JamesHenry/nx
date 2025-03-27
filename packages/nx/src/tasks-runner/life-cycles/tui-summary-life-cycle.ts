@@ -54,15 +54,15 @@ export function getTuiTerminalSummaryLifeCycle({
     }
   };
 
-  lifeCycle.printTaskTerminalOutput = (task, taskStatus, terminalOutput) => {
-    tasksToTerminalOutputs[task.id] = { terminalOutput, taskStatus };
-    taskIdsInOrderOfCompletion.push(task.id);
-  };
-
   lifeCycle.endTasks = (taskResults) => {
     for (let t of taskResults) {
       totalCompletedTasks++;
       inProgressTasks.delete(t.task.id);
+      tasksToTerminalOutputs[t.task.id] = {
+        terminalOutput: t.terminalOutput,
+        taskStatus: t.status,
+      };
+      taskIdsInOrderOfCompletion.push(t.task.id);
 
       switch (t.status) {
         case 'remote-cache':
