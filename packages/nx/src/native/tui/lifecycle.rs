@@ -166,6 +166,7 @@ impl AppLifeCycle {
         pinned_tasks: Vec<String>,
         tui_cli_args: TuiCliArgs,
         tui_config: TuiConfig,
+        title_text: String,
     ) -> Self {
         // Get the target names from nx_args.targets
         let rust_tui_cli_args = tui_cli_args.into();
@@ -177,13 +178,21 @@ impl AppLifeCycle {
             app: Arc::new(std::sync::Mutex::new(
                 App::new(
                     tasks.into_iter().map(|t| t.into()).collect(),
-                    rust_tui_cli_args.targets,
                     pinned_tasks,
                     rust_tui_config,
+                    title_text,
                 )
                 .unwrap(),
             )),
         }
+    }
+
+    #[napi]
+    pub fn start_command(&mut self, thread_count: Option<u32>) -> napi::Result<()> {
+        if let Ok(mut app) = self.app.lock() {
+            app.start_command(thread_count);
+        }
+        Ok(())
     }
 
     #[napi]

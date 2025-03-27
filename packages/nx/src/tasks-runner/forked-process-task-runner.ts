@@ -17,7 +17,6 @@ import {
 import { BatchProcess } from './running-tasks/batch-process';
 import { RunningTask } from './running-tasks/running-task';
 import { RustPseudoTerminal } from '../native';
-import { TUI_ENABLED } from './tui-enabled';
 
 const forkScript = join(__dirname, './fork.js');
 
@@ -30,7 +29,10 @@ export class ForkedProcessTaskRunner {
   private processes = new Set<RunningTask | BatchProcess>();
   private pseudoTerminals = new Set<PseudoTerminal>();
 
-  constructor(private readonly options: DefaultTasksRunnerOptions) {}
+  constructor(
+    private readonly options: DefaultTasksRunnerOptions,
+    private readonly tuiEnabled: boolean
+  ) {}
 
   async init() {
     this.setupProcessEventListeners();
@@ -127,14 +129,16 @@ export class ForkedProcessTaskRunner {
     }
   ): Promise<RunningTask | PseudoTtyProcess> {
     const shouldPrefix =
-      streamOutput && process.env.NX_PREFIX_OUTPUT === 'true' && !TUI_ENABLED;
+      streamOutput &&
+      process.env.NX_PREFIX_OUTPUT === 'true' &&
+      !this.tuiEnabled;
 
     // streamOutput would be false if we are running multiple targets
     // there's no point in running the commands in a pty if we are not streaming the output
     if (
       PseudoTerminal.isSupported() &&
       !disablePseudoTerminal &&
-      (TUI_ENABLED || (streamOutput && !shouldPrefix))
+      (this.tuiEnabled || (streamOutput && !shouldPrefix))
     ) {
       return this.forkProcessWithPseudoTerminal(task, {
         temporaryOutputPath,

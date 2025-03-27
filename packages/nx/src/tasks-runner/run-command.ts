@@ -41,6 +41,7 @@ import {
 } from '../utils/sync-generators';
 import { workspaceRoot } from '../utils/workspace-root';
 import { createTaskGraph, createTaskId } from './create-task-graph';
+import { isTuiEnabled } from './is-tui-enabled';
 import {
   CompositeLifeCycle,
   LifeCycle,
@@ -57,6 +58,7 @@ import { LegacyTaskHistoryLifeCycle } from './life-cycles/task-history-life-cycl
 import { TaskProfilingLifeCycle } from './life-cycles/task-profiling-life-cycle';
 import { TaskResultsLifeCycle } from './life-cycles/task-results-life-cycle';
 import { TaskTimingsLifeCycle } from './life-cycles/task-timings-life-cycle';
+import { getTuiTerminalSummaryLifeCycle } from './life-cycles/tui-summary-life-cycle';
 import {
   findCycle,
   makeAcyclic,
@@ -65,9 +67,11 @@ import {
 import { TasksRunner, TaskStatus } from './tasks-runner';
 import { shouldStreamOutput } from './utils';
 import chalk = require('chalk');
-import { getTuiTerminalSummaryLifeCycle } from './life-cycles/tui-summary-life-cycle';
 
-const originalStdoutWrite = process.stdout.write;
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+const originalConsoleLog = console.log.bind(console);
+const originalConsoleError = console.error.bind(console);
 
 async function getTerminalOutputLifeCycle(
   initiatingProject: string,
@@ -81,12 +85,49 @@ async function getTerminalOutputLifeCycle(
   const overridesWithoutHidden = { ...overrides };
   delete overridesWithoutHidden['__overrides_unparsed__'];
 
-  if (process.env.NX_TUI === 'true') {
+  if (isTuiEnabled(nxJson)) {
+    const interceptedNxCloudLogs: (string | Uint8Array<ArrayBufferLike>)[] = [];
+
+    const createPatchedConsoleMethod = (
+      originalMethod: typeof console.log | typeof console.error
+    ): typeof console.log | typeof console.error => {
+      return (...args: any[]) => {
+        // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
+        const stackTrace = new Error().stack;
+        const isNxCloudLog = stackTrace.includes(
+          join(workspaceRoot, '.nx', 'cache', 'cloud')
+        );
+        if (!isNxCloudLog) {
+          return originalMethod(...args);
+        }
+        // No-op the Nx Cloud client logs
+      };
+    };
+    // The cloud client calls console.log when NX_VERBOSE_LOGGING is set to true
+    console.log = createPatchedConsoleMethod(originalConsoleLog);
+    console.error = createPatchedConsoleMethod(originalConsoleError);
+
+    const patchedWrite = (_chunk, _encoding, callback) => {
+      // Preserve original behavior around callback and return value, just in case
+      if (callback) {
+        callback();
+      }
+      return true;
+    };
+
+    process.stdout.write = patchedWrite as any;
+    process.stderr.write = patchedWrite as any;
+
     const { AppLifeCycle, restoreTerminal } = await import('../native');
+    let appLifeCycle;
 
     const isRunOne = initiatingProject != null;
 
     const pinnedTasks: string[] = [];
+    const taskText = tasks.length === 1 ? 'task' : 'tasks';
+    const projectText = projectNames.length === 1 ? 'project' : 'projects';
+    let titleText = '';
+
     if (isRunOne) {
       const mainTaskId = createTaskId(
         initiatingProject,
@@ -99,13 +140,26 @@ async function getTerminalOutputLifeCycle(
       if (mainContinuousDependencies.length > 0) {
         pinnedTasks.push(mainContinuousDependencies[0]);
       }
+      const [project, target] = mainTaskId.split(':');
+      titleText = `${target} ${project}`;
+      if (tasks.length > 1) {
+        titleText += `, and ${tasks.length - 1} requisite ${taskText})`;
+      }
+    } else {
+      titleText =
+        nxArgs.targets.join(', ') +
+        ` for ${projectNames.length} ${projectText}`;
+      if (tasks.length > projectNames.length) {
+        titleText += `, and ${
+          tasks.length - projectNames.length
+        } requisite ${taskText}`;
+      }
     }
 
-    const lifeCycle = new AppLifeCycle(
-      tasks,
-      pinnedTasks,
-      nxArgs ?? {},
-      nxJson.tui ?? {}
+    let resolveRenderIsDonePromise: (value: void) => void;
+    // Default renderIsDone that will be overridden if the TUI is used
+    let renderIsDone = new Promise<void>(
+      (resolve) => (resolveRenderIsDonePromise = resolve)
     );
 
     const { lifeCycle: tsLifeCycle, printSummary } =
@@ -115,57 +169,115 @@ async function getTerminalOutputLifeCycle(
         args: nxArgs,
         overrides: overridesWithoutHidden,
         initiatingProject,
+        resolveRenderIsDonePromise,
       });
 
-    const renderIsDone = new Promise<void>((resolve) => {
-      lifeCycle.__init(() => {
-        resolve();
-      });
-    })
-      .then(() => {
-        restoreTerminal();
-      })
-      .finally(() => {
-        // Revert the patched stdout.write method
+    if (tasks.length === 0) {
+      renderIsDone = renderIsDone.then(() => {
+        // Revert the patched methods
         process.stdout.write = originalStdoutWrite;
+        process.stderr.write = originalStderrWrite;
+        console.log = originalConsoleLog;
+        console.error = originalConsoleError;
         printSummary();
       });
+    }
 
-    /**
-     * Patch stdout.write method to pass Nx Cloud client logs to the TUI via the lifecycle
-     */
-    const createPatchedLogWrite = (
-      originalWrite: typeof process.stdout.write
-    ): typeof process.stdout.write => {
-      // @ts-ignore
-      return (chunk, encoding, callback) => {
-        // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
-        const stackTrace = new Error().stack;
-        const isNxCloudLog = stackTrace.includes(
-          join(workspaceRoot, '.nx', 'cache', 'cloud')
-        );
-        if (!isNxCloudLog) {
-          return originalWrite(chunk, encoding, callback);
-        }
+    const lifeCycles: LifeCycle[] = [tsLifeCycle];
+    // Only run the TUI if there are tasks to run
+    if (tasks.length > 0) {
+      appLifeCycle = new AppLifeCycle(
+        tasks,
+        pinnedTasks,
+        nxArgs ?? {},
+        nxJson.tui ?? {},
+        titleText
+      );
+      lifeCycles.unshift(appLifeCycle);
 
-        // Do not bother to store logs with only whitespace characters, they aren't relevant for the TUI
-        const trimmedChunk = chunk.toString().trim();
-        if (trimmedChunk.length) {
-          // Remove ANSI escape codes, the TUI will control the formatting
-          lifeCycle.__setCloudMessage(stripVTControlCharacters(trimmedChunk));
-        }
-        // Preserve original behavior around callback and return value, just in case
-        if (callback) {
-          callback();
-        }
-        return true;
+      /**
+       * Patch stdout.write and stderr.write methods to pass Nx Cloud client logs to the TUI via the lifecycle
+       */
+      const createPatchedLogWrite = (
+        originalWrite: typeof process.stdout.write | typeof process.stderr.write
+      ): typeof process.stdout.write | typeof process.stderr.write => {
+        // @ts-ignore
+        return (chunk, encoding, callback) => {
+          // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
+          const stackTrace = new Error().stack;
+          const isNxCloudLog = stackTrace.includes(
+            join(workspaceRoot, '.nx', 'cache', 'cloud')
+          );
+          if (isNxCloudLog) {
+            interceptedNxCloudLogs.push(chunk);
+            // Do not bother to store logs with only whitespace characters, they aren't relevant for the TUI
+            const trimmedChunk = chunk.toString().trim();
+            if (trimmedChunk.length) {
+              // Remove ANSI escape codes, the TUI will control the formatting
+              appLifeCycle?.__setCloudMessage(
+                stripVTControlCharacters(trimmedChunk)
+              );
+            }
+          }
+          // Preserve original behavior around callback and return value, just in case
+          if (callback) {
+            callback();
+          }
+          return true;
+        };
       };
-    };
 
-    process.stdout.write = createPatchedLogWrite(originalStdoutWrite);
+      const createPatchedConsoleMethod = (
+        originalMethod: typeof console.log | typeof console.error
+      ): typeof console.log | typeof console.error => {
+        return (...args: any[]) => {
+          // Check if the log came from the Nx Cloud client, otherwise invoke the original write method
+          const stackTrace = new Error().stack;
+          const isNxCloudLog = stackTrace.includes(
+            join(workspaceRoot, '.nx', 'cache', 'cloud')
+          );
+          if (!isNxCloudLog) {
+            return originalMethod(...args);
+          }
+          // No-op the Nx Cloud client logs
+        };
+      };
+
+      process.stdout.write = createPatchedLogWrite(originalStdoutWrite);
+      process.stderr.write = createPatchedLogWrite(originalStderrWrite);
+
+      // The cloud client calls console.log when NX_VERBOSE_LOGGING is set to true
+      console.log = createPatchedConsoleMethod(originalConsoleLog);
+      console.error = createPatchedConsoleMethod(originalConsoleError);
+
+      renderIsDone = new Promise<void>((resolve) => {
+        appLifeCycle.__init(() => {
+          resolve();
+        });
+      })
+        .then(() => {
+          restoreTerminal();
+        })
+        .finally(() => {
+          // Revert the patched methods
+          process.stdout.write = originalStdoutWrite;
+          process.stderr.write = originalStderrWrite;
+          console.log = originalConsoleLog;
+          console.error = originalConsoleError;
+          printSummary();
+          // Print the intercepted Nx Cloud logs
+          for (const log of interceptedNxCloudLogs) {
+            const logString = log.toString().trimStart();
+            process.stdout.write(logString);
+            if (logString) {
+              process.stdout.write('\n');
+            }
+          }
+        });
+    }
 
     return {
-      lifeCycle: new CompositeLifeCycle([lifeCycle, tsLifeCycle]),
+      lifeCycle: new CompositeLifeCycle(lifeCycles),
       renderIsDone,
     };
   }

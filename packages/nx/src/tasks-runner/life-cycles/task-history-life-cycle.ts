@@ -1,9 +1,10 @@
-import { serializeTarget } from '../../utils/serialize-target';
 import { Task } from '../../config/task-graph';
-import { output } from '../../utils/output';
-import { LifeCycle, TaskResult } from '../life-cycle';
 import type { TaskRun as NativeTaskRun } from '../../native';
+import { output } from '../../utils/output';
+import { serializeTarget } from '../../utils/serialize-target';
 import { getTaskHistory, TaskHistory } from '../../utils/task-history';
+import { isTuiEnabled } from '../is-tui-enabled';
+import { LifeCycle, TaskResult } from '../life-cycle';
 
 interface TaskRun extends NativeTaskRun {
   target: Task['target'];
@@ -46,7 +47,7 @@ export class TaskHistoryLifeCycle implements LifeCycle {
       entries.map(([hash]) => hash)
     );
     // Do not directly print output when using the TUI
-    if (process.env.NX_TUI === 'true') {
+    if (isTuiEnabled()) {
       return;
     }
     if (flakyTasks.length > 0) {

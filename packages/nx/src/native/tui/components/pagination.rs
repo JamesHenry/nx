@@ -26,11 +26,15 @@ impl Pagination {
             Style::default()
         };
 
-        // Left indentation to align with other elements
-        let mut spans = vec![Span::raw("         ")];
+        // Create spans with proper content
+        let mut spans = vec![];
+
+        // Ensure we have at least 1 page
+        let total_pages = self.total_pages.max(1);
+        let current_page = self.current_page.min(total_pages - 1);
 
         // Left arrow - dim if we're on the first page
-        let left_arrow = if self.current_page == 0 {
+        let left_arrow = if current_page == 0 {
             Span::styled("←", base_style.fg(Color::Cyan).add_modifier(Modifier::DIM))
         } else {
             Span::styled("←", base_style.fg(Color::Cyan))
@@ -40,13 +44,13 @@ impl Pagination {
         // Page numbers
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
-            format!("{}/{}", self.current_page + 1, self.total_pages),
+            format!("{}/{}", current_page + 1, total_pages),
             base_style.fg(Color::DarkGray),
         ));
         spans.push(Span::raw(" "));
 
         // Right arrow - dim if we're on the last page
-        let right_arrow = if self.current_page >= self.total_pages.saturating_sub(1) {
+        let right_arrow = if current_page >= total_pages.saturating_sub(1) {
             Span::styled("→", base_style.fg(Color::Cyan).add_modifier(Modifier::DIM))
         } else {
             Span::styled("→", base_style.fg(Color::Cyan))

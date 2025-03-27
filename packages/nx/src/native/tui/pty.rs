@@ -54,12 +54,8 @@ impl PtyInstance {
 
             // If we lost height, scroll up by that amount to maintain relative view position
             if rows < old_rows {
-                let lines_lost = (old_rows - rows) as usize;
-                let current = new_parser.screen().scrollback();
-                // Adjust by -1 to ensure that the cursor is consistently at the bottom of the visible output on resize
-                new_parser
-                    .screen_mut()
-                    .set_scrollback(current + lines_lost - 1);
+                // Set to 0 to ensure that the cursor is consistently at the bottom of the visible output on resize
+                new_parser.screen_mut().set_scrollback(0);
             }
 
             *parser_guard = new_parser;

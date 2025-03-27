@@ -1,6 +1,7 @@
 import { Serializable } from 'child_process';
 import * as yargsParser from 'yargs-parser';
 import { ExecutorContext } from '../../config/misc-interfaces';
+import { isTuiEnabled } from '../../tasks-runner/is-tui-enabled';
 import {
   createPseudoTerminal,
   PseudoTerminal,
@@ -136,16 +137,24 @@ export async function runCommands(
     !normalized.commands[0].prefix &&
     normalized.usePty;
 
+  const tuiEnabled = isTuiEnabled();
+
   try {
     const runningTask = isSingleCommandAndCanUsePseudoTerminal
       ? await runSingleCommandWithPseudoTerminal(
           normalized,
           context,
-          pseudoTerminal
+          pseudoTerminal,
+          tuiEnabled
         )
       : options.parallel
-      ? new ParallelRunningTasks(normalized, context)
-      : new SeriallyRunningTasks(normalized, context, pseudoTerminal);
+      ? new ParallelRunningTasks(normalized, context, tuiEnabled)
+      : new SeriallyRunningTasks(
+          normalized,
+          context,
+          tuiEnabled,
+          pseudoTerminal
+        );
 
     registerProcessListener(runningTask, pseudoTerminal);
     return runningTask;

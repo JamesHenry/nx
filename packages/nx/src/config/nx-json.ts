@@ -555,7 +555,11 @@ export interface NxJsonConfiguration<T = '*' | string[]> {
    */
   tui?: {
     /**
-     * Whether or not to exit the TUI automatically after all tasks finish.
+     * Whether to enable the TUI whenever possible (based on the current environment and terminal).
+     */
+    enabled?: boolean;
+    /**
+     * Whether to exit the TUI automatically after all tasks finish.
      *
      * - If set to `true`, the TUI will exit immediately.
      * - If set to `false` the TUI will not automatically exit.

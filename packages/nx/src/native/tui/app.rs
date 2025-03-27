@@ -56,11 +56,11 @@ pub enum Focus {
 impl App {
     pub fn new(
         tasks: Vec<Task>,
-        target_names: Vec<String>,
         pinned_tasks: Vec<String>,
         tui_config: TuiConfig,
+        title_text: String,
     ) -> Result<Self> {
-        let tasks_list = TasksList::new(tasks, target_names, pinned_tasks);
+        let tasks_list = TasksList::new(tasks, pinned_tasks, title_text);
         let help_popup = HelpPopup::new();
         let countdown_popup = CountdownPopup::new();
         let focus = tasks_list.get_focus();
@@ -83,6 +83,16 @@ impl App {
         })
     }
 
+    pub fn start_command(&mut self, thread_count: Option<u32>) {
+        if let Some(tasks_list) = self
+            .components
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
+        {
+            tasks_list.set_max_parallel(thread_count);
+        }
+    }
+
     pub fn start_tasks(&mut self, tasks: Vec<Task>) {
         if let Some(tasks_list) = self
             .components
@@ -102,7 +112,10 @@ impl App {
         // If the status is a cache hit, we need to create a new parser and writer for the task in order to print the output
         if is_cache_hit(status) {
             let (parser, parser_and_writer) = TasksList::create_empty_parser_and_noop_writer();
-            TasksList::write_output_to_parser(parser, output);
+
+            // Add ANSI escape sequence to hide cursor at the end of output, it would be confusing to have it visible when a task is a cache hit
+            let output_with_hidden_cursor = format!("{}\x1b[?25l", output);
+            TasksList::write_output_to_parser(parser, output_with_hidden_cursor);
 
             if let Some(tasks_list) = self
                 .components
@@ -379,53 +392,31 @@ impl App {
                         _ => {
                             // Handle spacebar toggle regardless of focus
                             if key.code == KeyCode::Char(' ') {
-                                if let Some(tasks_list) = self
-                                    .components
-                                    .iter_mut()
-                                    .find_map(|c| c.as_any_mut().downcast_mut::<TasksList>())
-                                {
-                                    tasks_list.toggle_output_visibility();
-                                }
+                                tasks_list.toggle_output_visibility();
                                 return Ok(false); // Skip other key handling
                             }
 
+                            let is_filter_mode = tasks_list.filter_mode;
+
                             match self.focus {
                                 Focus::TaskList => match key.code {
-                                    KeyCode::Down | KeyCode::Char('j') => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.next();
-                                        }
+                                    KeyCode::Char('j') if !is_filter_mode => {
+                                        tasks_list.next();
                                     }
-                                    KeyCode::Up | KeyCode::Char('k') => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.previous();
-                                        }
+                                    KeyCode::Down => {
+                                        tasks_list.next();
+                                    }
+                                    KeyCode::Char('k') if !is_filter_mode => {
+                                        tasks_list.previous();
+                                    }
+                                    KeyCode::Up => {
+                                        tasks_list.previous();
                                     }
                                     KeyCode::Left => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.previous_page();
-                                        }
+                                        tasks_list.previous_page();
                                     }
                                     KeyCode::Right => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.next_page();
-                                        }
+                                        tasks_list.next_page();
                                     }
                                     KeyCode::Esc => {
                                         if matches!(self.focus, Focus::HelpPopup) {
@@ -439,13 +430,8 @@ impl App {
                                             self.focus = self.previous_focus;
                                         } else {
                                             // Only clear filter when help popup is not in focus
-                                            if let Some(tasks_list) =
-                                                self.components.iter_mut().find_map(|c| {
-                                                    c.as_any_mut().downcast_mut::<TasksList>()
-                                                })
-                                            {
-                                                tasks_list.clear_filter();
-                                            }
+
+                                            tasks_list.clear_filter();
                                         }
                                     }
                                     KeyCode::Char(c) => {
@@ -486,62 +472,32 @@ impl App {
                                         }
                                     }
                                     KeyCode::Backspace => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.filter_mode {
-                                                tasks_list.remove_filter_char();
-                                            }
+                                        if tasks_list.filter_mode {
+                                            tasks_list.remove_filter_char();
                                         }
                                     }
                                     KeyCode::Tab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.has_visible_panes() {
-                                                tasks_list.focus_next();
-                                                self.focus = tasks_list.get_focus();
-                                            }
+                                        if tasks_list.has_visible_panes() {
+                                            tasks_list.focus_next();
+                                            self.focus = tasks_list.get_focus();
                                         }
                                     }
                                     KeyCode::BackTab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            if tasks_list.has_visible_panes() {
-                                                tasks_list.focus_previous();
-                                                self.focus = tasks_list.get_focus();
-                                            }
+                                        if tasks_list.has_visible_panes() {
+                                            tasks_list.focus_previous();
+                                            self.focus = tasks_list.get_focus();
                                         }
                                     }
                                     _ => {}
                                 },
                                 Focus::MultipleOutput(_idx) => match key.code {
                                     KeyCode::Tab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.focus_next();
-                                            self.focus = tasks_list.get_focus();
-                                        }
+                                        tasks_list.focus_next();
+                                        self.focus = tasks_list.get_focus();
                                     }
                                     KeyCode::BackTab => {
-                                        if let Some(tasks_list) =
-                                            self.components.iter_mut().find_map(|c| {
-                                                c.as_any_mut().downcast_mut::<TasksList>()
-                                            })
-                                        {
-                                            tasks_list.focus_previous();
-                                            self.focus = tasks_list.get_focus();
-                                        }
+                                        tasks_list.focus_previous();
+                                        self.focus = tasks_list.get_focus();
                                     }
                                     _ => {}
                                 },
@@ -663,7 +619,7 @@ impl App {
                     let area = f.area();
 
                     // Check for minimum viable viewport size at the app level
-                    if area.height < 12 || area.width < 40 {
+                    if area.height < 10 || area.width < 40 {
                         let message = Line::from(vec![
                             Span::raw("  "),
                             Span::styled(
@@ -674,7 +630,7 @@ impl App {
                                     .fg(Color::Black),
                             ),
                             Span::raw("  "),
-                            Span::raw("Please make your terminal viewport larger in order to view the tasks UI"),
+                            Span::raw("Please make your terminal viewport larger in order to view the terminal UI"),
                         ]);
 
                         // Create empty lines for vertical centering

@@ -19,12 +19,14 @@ export function getTuiTerminalSummaryLifeCycle({
   args,
   overrides,
   initiatingProject,
+  resolveRenderIsDonePromise,
 }: {
   projectNames: string[];
   tasks: Task[];
   args: { targets?: string[]; configuration?: string; parallel?: number };
   overrides: Record<string, unknown>;
   initiatingProject: string;
+  resolveRenderIsDonePromise: (value: void) => void;
 }) {
   const lifeCycle = {} as Partial<LifeCycle>;
 
@@ -82,6 +84,7 @@ export function getTuiTerminalSummaryLifeCycle({
 
   lifeCycle.endCommand = () => {
     timeTakenText = prettyTime(process.hrtime(start));
+    resolveRenderIsDonePromise();
   };
 
   const printSummary = () => {
@@ -91,7 +94,7 @@ export function getTuiTerminalSummaryLifeCycle({
     timeTakenText ??= prettyTime(process.hrtime(start));
 
     if (totalTasks === 0) {
-      console.log(output.applyNxPrefix('gray', 'No tasks were run'));
+      console.log(`\n${output.applyNxPrefix('gray', 'No tasks were run')}\n`);
       return;
     }
 
@@ -215,6 +218,8 @@ export function getTuiTerminalSummaryLifeCycle({
   };
 
   const printRunManySummary = () => {
+    console.log('');
+
     const lines: string[] = [];
     const failure = totalSuccessfulTasks !== totalTasks;
 
@@ -274,7 +279,7 @@ export function getTuiTerminalSummaryLifeCycle({
           )
         );
       }
-      lines.push(output.colors.green(successSummaryRows.join(EOL)));
+      lines.push(successSummaryRows.join(EOL));
     } else {
       const text = `${
         inProgressTasks.size ? 'Cancelled while running' : 'Ran'
@@ -379,12 +384,12 @@ export function getTuiTerminalSummaryLifeCycle({
 
         lines.push(output.colors.red(failureSummaryRows.join(EOL)));
       }
-
-      // adds some vertical space after the summary to avoid bunching against terminal
-      lines.push('');
-
-      console.log(lines.join(EOL));
     }
+
+    // adds some vertical space after the summary to avoid bunching against terminal
+    lines.push('');
+
+    console.log(lines.join(EOL));
   };
   return { lifeCycle, printSummary };
 }
